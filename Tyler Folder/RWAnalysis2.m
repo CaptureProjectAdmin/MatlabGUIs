@@ -272,6 +272,7 @@ classdef RWAnalysis2 < handle
             p.rmoverlap = false; %remove overlapping trials
             p.rmoutliers = false; %remove outliers in in/out boxplot data
             p.glmemdl = ''; %glme model (i.e. nTheta ~ InFlag + (1|uPtChan)
+            p.showbegendtrans = false; %show beg/end transition timepoint in specgram plot
 
             if ~all(ismember(InputNames,[PropNames;fieldnames(p)]))
                 error('Input names are incorrect!')
@@ -1808,6 +1809,38 @@ classdef RWAnalysis2 < handle
                 % [PercOverlap,AvgOverlapSec] = obj.calcOverlap(MT(~RMIdx,:),p.transrng); %did it work?
             end
 
+            MT = addvars(MT,nan(size(MT,1),1),'NewVariableNames','npidx2');
+            for k=1:size(MT,1)
+                pt = MT.patient(k);
+                wk = MT.walk(k);
+                ev = MT.evnt(k);
+                np = MT.npidx(k);
+                ch = MT.chan(k);
+                if contains(ev,'Beg')
+                    ev2 = regexprep(ev,'Beg','End');
+                    idx = obj.MultTrans.Patient==pt & obj.MultTrans.Walk==wk & obj.MultTrans.Chan==ch & strcmp(obj.MultTrans.Evnt,ev2);
+                    np2 = obj.MultTrans.DT_np_idx(idx);
+                    np2 = np2((np2-np)>0); %must occur after np
+                    [~,idx] = min(np2-np);
+                    if isempty(idx)
+                        MT.npidx2(k) = nan;
+                    else
+                        MT.npidx2(k) = np2(idx);
+                    end
+                elseif contains(ev,'End')
+                    ev2 = regexprep(ev,'End','Beg');
+                    idx = obj.MultTrans.Patient==pt & obj.MultTrans.Walk==wk & obj.MultTrans.Chan==ch & strcmp(obj.MultTrans.Evnt,ev2);
+                    np2 = obj.MultTrans.DT_np_idx(idx);
+                    np2 = np2((np-np2)>0); %must before after np
+                    [~,idx] = min(np-np2);
+                    if isempty(idx)
+                        MT.npidx2(k) = nan;
+                    else
+                        MT.npidx2(k) = np2(idx);
+                    end
+                end
+            end
+
             obj.MultTrans.MT = MT;
 
             disp('Selected transitions:')
@@ -3126,6 +3159,17 @@ classdef RWAnalysis2 < handle
             contour(tsec,freq,(npwr_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
             set(aH,'yscale','log','YTick',2.^(1:6),'yticklabel',2.^(1:6),'yminortick','off','clim',climit); %now in units of standard deviation
             plot(aH,[0,0],[2,120],'--k','LineWidth',2);
+            %%%%%%%%%%%% Beg or End event time as vertical line %%%%%%%%%%
+            np = obj.MultTrans.MT.npidx2-obj.MultTrans.MT.npidx;
+            % np_m = mean(np,'omitnan')/obj.MultTrans.FS_np;
+            % np_s = 1.96*std(np,0,'omitnan')./sqrt(length(np))/obj.MultTrans.FS_np;
+            np_m = prctile(np,[25,50,75])./obj.MultTrans.FS_np;
+            evH = plot(aH,[np_m(2),np_m(2)],[2,120],'k',[np_m(1),np_m(1)],[2,120],':k',[np_m(3),np_m(3)],[2,120],':k');
+            if ~p.showbegendtrans
+                set(evH,'Visible','off');
+            end
+            fH.UserData.evH = evH;
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             pH = nan(size(obj.PredList,2),4);
             set(aH,'FontName','Arial','FontSize',18,'TitleFontSizeMultiplier',0.8);
             yyaxis(aH,'right');
@@ -3203,7 +3247,7 @@ classdef RWAnalysis2 < handle
             cb.Ticks = cblims;
             cb.TickLabels = cblims;
             xlim(aH,[tsec(1),tsec(end)])
-            ylim(aH,[2,120])
+            ylim(aH,[2,85])
             if contains(permtype,'zscore')
                 ylabel(cb,'Zscore')
             else
