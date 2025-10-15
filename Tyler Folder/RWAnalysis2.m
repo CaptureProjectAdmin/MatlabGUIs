@@ -103,21 +103,25 @@ classdef RWAnalysis2 < handle
     % 
     % *SpecgramGUI: 
     %     1) X theta(4-8)/gamma(30-85) ratio boxplot (show correlation with fooofex and add as another predictor variable for transitions/glme) (done)
-    %     2) fooof offset in same plot as exponent
+    %     2) X fooof offset in same plot as exponent (done)
     %     3) X evoked potential (done)
     %     4) plv/pac (theta/gamma)
-    %     5) fooof peak freq (theta, alpha, beta)
+    %     5) *fooof peak freq (theta, alpha, beta)
     %     6) X Pepisode for 12-16Hz (low beta) and 17-30Hz (high beta) (done) 
     %     7) X reduce pep to 3 cycles (tried this and does not work as well as 10 cycles) (done) 
     %     8) X try fixed instead of knee for fbosc (done)
     %     9) X Option to plot specgram and predictors in two separate axes one on top of other (not needed) 
-    %    10) Compare fooof fit on average participant vs single trial
+    %    10) X Compare fooof fit on average participant vs single trial (done)
     %    11) X Metric to show large residuals at low freq in fooof fit (done - variance of residuals)
     %    12) Methods description of fooof comparison (knee/fixed)
-    %    13) Default font to Arial size 18
-    %    14) Plot end event plus std when aligned on beginning and vice versa
-    %    15) Count marks per walk
-    %    16) Recompile!
+    %    13) X Default font to Arial size 18 (done)
+    %    14) X Plot end event plus std when aligned on beginning and vice versa (done) 
+    %    15) X Count marks per walk (done - saved as MarkCountsPerWalk.mat)
+    %    16) X Add list of predictors with corresponding number to front panel of gui (done)
+    %    17) Need more filtering options (stopped but not lost, lost but not talking)
+    %    18) Make cluster outline thicker
+    %    19) Add acceleration predictor
+    %    20) Add events to glme
     %
     % *GLMEGUI: data export! (in/out and conf matrix plots, boxplot comparison with pepisode)
     % *****Check model fit for fooof over time
@@ -181,14 +185,15 @@ classdef RWAnalysis2 < handle
             %List of predictor variables available for analysis. When new
             %predictors are added, this list needs to be updated
             obj.PredList = [...
-                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg'};...
-                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR'}];
+                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg','of','kd2'};...
+                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR','FooofOf','KDE2'}];
 
             %List of ylimits for predictor variables. This is used to
             %adjust ylim of predictor overlay plots in
             %plotMultTransSpecGramPerm.
             obj.PredYlim = [[0,1.5];[0,1];[1,7];[0,500];[-0.2,0.5];[0,0.3];...
-                [0,0.3];[0,0.3];[0,0.3];[0,40];[0.9,1.1];[-100,100];[0.7,1.3]];
+                [0,0.3];[0,0.3];[0,0.3];[0,40];[0.9,1.1];[-100,100];...
+                [0.7,1.3];[0.9,1.1];[0.02,0.2]];
 
             %Scale factor for generating list of y offsets for plotting a
             %raster of zscored predictor variables.
@@ -319,7 +324,7 @@ classdef RWAnalysis2 < handle
 
             %[notchB,notchA] = iirnotch(60/125,0.012);
             
-            obj.DTable = cell(TotalWalks,35);
+            obj.DTable = cell(TotalWalks,38);
             for k=1:TotalWalks
                 fprintf('Loading patient %s walk %d...\n',obj.PatientID,k);
                 
@@ -478,13 +483,13 @@ classdef RWAnalysis2 < handle
                                 else
                                     evnt_table = vertcat(evnt_table,table({"KDEPeakLow"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
                                 end
-                                if m<floor(length(pks)/3)
-                                    evnt_table = vertcat(evnt_table,table({"KDEPeakHighTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
-                                elseif m>=floor(length(pks)/3) && m<2*floor(length(pks)/3)
-                                    evnt_table = vertcat(evnt_table,table({"KDEPeakMidTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
-                                else
-                                    evnt_table = vertcat(evnt_table,table({"KDEPeakLowTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
-                                end
+                                % if m<floor(length(pks)/3)
+                                %     evnt_table = vertcat(evnt_table,table({"KDEPeakHighTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                % elseif m>=floor(length(pks)/3) && m<2*floor(length(pks)/3)
+                                %     evnt_table = vertcat(evnt_table,table({"KDEPeakMidTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                % else
+                                %     evnt_table = vertcat(evnt_table,table({"KDEPeakLowTercile"},{""},pupilframe,goproframe,npsample,ntp_kde,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                % end
                             end
                             for m=1:length(trs)
                                 if trs(m)<pks5
@@ -672,6 +677,41 @@ classdef RWAnalysis2 < handle
                         end
                         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+                        %KDE2 (modified by Alireza)
+                        if isfield(SS,'ntp_kde2')
+                            obj.DTable(k,36) = {SS.d_kde2};
+                            obj.DTable(k,37) = {SS.ntp_kde2};
+                            if isempty(SS.fs_kde2); obj.DTable(k,38) = {60}; else; obj.DTable(k,38) = {SS.fs_kde2}; end
+                            [pks,ploc] = findpeaks(SS.d_kde2,'MinPeakProminence',0.01,'NPeaks',100); %peaks
+                            [~,pidx] = sort(pks,'descend'); pks = pks(pidx); ploc = ploc(pidx); pks5 = prctile(pks,5);
+                            [trs,tloc] = findpeaks(-SS.d_kde2,'MinPeakProminence',0.01,'NPeaks',100); trs = -trs; %troughs
+                            [~,tidx] = sort(trs,'descend'); trs = trs(tidx); tloc = tloc(tidx);
+                            evnt_table = [];
+                            for m=1:length(pks) %going highest to lowest
+                                ntp_kde2 = SS.ntp_kde2(ploc(m));
+                                [~,pupilframe] = min(abs(SS.ntp_pupil - ntp_kde2));
+                                [~,goproframe] = min(abs(SS.ntp_gp - ntp_kde2));
+                                [~,npsample] = min(abs(SS.ntp_np - ntp_kde2));
+                                evnt_table = vertcat(evnt_table,table({"KDE2PeakAll"},{""},pupilframe,goproframe,npsample,ntp_kde2,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                if m<floor(length(pks)/2)
+                                    evnt_table = vertcat(evnt_table,table({"KDE2PeakHigh"},{""},pupilframe,goproframe,npsample,ntp_kde2,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                else
+                                    evnt_table = vertcat(evnt_table,table({"KDE2PeakLow"},{""},pupilframe,goproframe,npsample,ntp_kde2,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                end
+                            end
+                            for m=1:length(trs)
+                                if trs(m)<pks5
+                                    ntp_kde2 = SS.ntp_kde2(tloc(m));
+                                    [~,pupilframe] = min(abs(SS.ntp_pupil - ntp_kde2));
+                                    [~,goproframe] = min(abs(SS.ntp_gp - ntp_kde2));
+                                    [~,npsample] = min(abs(SS.ntp_np - ntp_kde2));
+                                    evnt_table = vertcat(evnt_table,table({"KDE2Trough"},{""},pupilframe,goproframe,npsample,ntp_kde2,'VariableNames',{'Event','Description','PupilFrame','GoProFrame','NPSample','NTP'}));
+                                end
+                            end
+                            SS.evnts_tbl = vertcat(SS.evnts_tbl,evnt_table);
+                            SS.evnts_tbl = sortrows(SS.evnts_tbl,"NTP");
+                        end
+
                         ptnum = str2double(regexp(obj.PatientID,'\d+$','match','once'));
 
                         SS.evnts_tbl =  addvars(SS.evnts_tbl,repmat(ptnum,size(SS.evnts_tbl,1),1),'NewVariableNames','Patient','Before','Event');
@@ -710,6 +750,7 @@ classdef RWAnalysis2 < handle
                 'd_pep','ntp_pep','fs_pep','f_pep',...
                 'd_imu','ntp_imu','fs_imu',...
                 'd_fof','ntp_fof','fs_fof','f_fof',...
+                'd_kde2','ntp_kde2','fs_kde2',...
                 });
 
         end %loadData
@@ -817,6 +858,7 @@ classdef RWAnalysis2 < handle
             DT_pe = []; DT_pe_idx = []; %bosc pepisode
             DT_im = []; DT_im_idx = []; %imu
             DT_fo = []; DT_fo_idx = []; %fooof
+            DT_kd2 = []; DT_kd2_idx = []; %kde2 modified by alireza
             EvntTrans = {}; %event type
             DescTrans = {}; %event description
             WalkNumTrans = []; %walk number for transitions
@@ -887,6 +929,11 @@ classdef RWAnalysis2 < handle
                 fs_fo = obj.DTable.fs_fof(m);
                 f_fo = obj.DTable.f_fof(m,:);
 
+                %KDE2
+                d_kd2 = obj.DTable.d_kde2{m};
+                ntp_kd2 = obj.DTable.ntp_kde2{m}; %ntp in sec
+                fs_kd2 = obj.DTable.fs_kde2(m);
+
                 %12sec window around transition
                 win_trans_sec = obj.WinTransSec; %sec
                 ntp = dbb.NTP; %all transitions types
@@ -902,6 +949,7 @@ classdef RWAnalysis2 < handle
                 win_trans_pe = (-win_trans_sec*fs_pe:win_trans_sec*fs_pe); d_pe_trans = nan(length(win_trans_pe),length(ntp),size(f_pe,1),4); d_pe_trans_idx = nan(length(ntp),1);
                 win_trans_im = (-win_trans_sec*fs_im:win_trans_sec*fs_im); d_im_trans = nan(length(win_trans_im),length(ntp),length(f_im)); d_im_trans_idx = nan(length(ntp),1);
                 win_trans_fo = (-win_trans_sec*fs_fo:win_trans_sec*fs_fo); d_fo_trans = nan(length(win_trans_fo),length(ntp),length(f_fo),4); d_fo_trans_idx = nan(length(ntp),1);
+                win_trans_kd2 = (-win_trans_sec*fs_kd2:win_trans_sec*fs_kd2); d_kd2_trans = nan(length(win_trans_kd2),length(ntp)); d_kd2_trans_idx = nan(length(ntp),1);
                 t_xs = win_trans_xs./fs_xs; %for velocity change calculation
                 t_xs_idx = t_xs>-5 & t_xs<5; %only focus on change in vel for +-5sec
                 d_xs_vchg = nan(length(ntp),1); %percent velocity change
@@ -1018,6 +1066,17 @@ classdef RWAnalysis2 < handle
                             fprintf('Trans segment %0.0f for walk %0.0f is out of range of fooof data. Filling with NaNs.\n',k,walknum);
                         end
                     end
+
+                    %KDE2
+                    [~,midx] = min(abs(ntp_kd2-ntp(k)));
+                    if ~isempty(midx)
+                        if (midx+win_trans_kd2(1))>=1 && (midx+win_trans_kd2(end))<=length(d_kd2)
+                            d_kd2_trans_idx(k) = midx;
+                            d_kd2_trans(:,k) = d_kd2(midx+win_trans_kd2);
+                        else
+                            fprintf('Trans segment %0.0f for walk %0.0f is out of range of kde2 data. Filling with NaNs.\n',k,walknum);
+                        end
+                    end
                 end %ntp loop
                 DT_np = cat(2,DT_np,d_np_trans);
                 DT_np_idx = cat(1,DT_np_idx,d_np_trans_idx);
@@ -1040,6 +1099,8 @@ classdef RWAnalysis2 < handle
                 DT_im_idx = cat(1,DT_im_idx,d_im_trans_idx);
                 DT_fo = cat(2,DT_fo,d_fo_trans);
                 DT_fo_idx = cat(1,DT_fo_idx,d_fo_trans_idx);
+                DT_kd2 = cat(2,DT_kd2,d_kd2_trans);
+                DT_kd2_idx = cat(1,DT_kd2_idx,d_kd2_trans_idx);
                 EvntTrans = cat(1,EvntTrans,evnt);
                 DescTrans = cat(1,DescTrans,desc);
                 WalkNumTrans = cat(1,WalkNumTrans,ones(size(d_np_trans,2),1).*walknum);
@@ -1068,6 +1129,8 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.DT_im_idx = DT_im_idx;
             obj.DParsed.Trans.DT_fo = DT_fo;
             obj.DParsed.Trans.DT_fo_idx = DT_fo_idx;
+            obj.DParsed.Trans.DT_kd2 = DT_kd2;
+            obj.DParsed.Trans.DT_kd2_idx = DT_kd2_idx;
             obj.DParsed.Trans.WT_np_samp = win_trans_np;
             obj.DParsed.Trans.WT_np_sec = win_trans_np/fs_np;
             obj.DParsed.Trans.WT_xs_samp = win_trans_xs;
@@ -1088,6 +1151,8 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.WT_im_sec = win_trans_im/fs_im;
             obj.DParsed.Trans.WT_fo_samp = win_trans_fo;
             obj.DParsed.Trans.WT_fo_sec = win_trans_fo/fs_fo;
+            obj.DParsed.Trans.WT_kd2_samp = win_trans_kd2;
+            obj.DParsed.Trans.WT_kd2_sec = win_trans_kd2/fs_kd2;
             obj.DParsed.Trans.FS_np = fs_np;
             obj.DParsed.Trans.FS_xs = fs_xs;
             obj.DParsed.Trans.FS_gz = fs_gz;
@@ -1103,6 +1168,7 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.F_im = f_im; %field names for imu data
             obj.DParsed.Trans.FS_fo = fs_fo;
             obj.DParsed.Trans.F_fo = f_fo; %field names for fooof data
+            obj.DParsed.Trans.FS_kd2 = fs_kd2;
             obj.DParsed.Trans.EvntTrans = EvntTrans;
             obj.DParsed.Trans.DescTrans = DescTrans;
             obj.DParsed.Trans.WalkNumTrans = WalkNumTrans;
@@ -1123,6 +1189,7 @@ classdef RWAnalysis2 < handle
             DT_gz_idx = []; DT_am_idx = []; DT_kd_idx = []; DT_wv_idx = [];
             DT_bi_idx = []; DT_bi_flds = {}; DT_pe_idx = []; 
             DT_im_idx = []; DT_im_flds = {}; DT_fo_idx = []; DT_fo_flds = {};
+            DT_kd2_idx = [];
             DT_Walk = []; DT_Evnt = []; DT_Desc = []; DT_StopWalk = []; 
             DT_GoWalk = []; DT_OL = []; DT_Region = []; DT_RegionLabel = []; DT_NSamp = []; %number of data samples in walk
             DT_Chan = []; DT_ChanLabel = []; DT_Patient = []; 
@@ -1154,6 +1221,7 @@ classdef RWAnalysis2 < handle
                 dt_pe_idx = permute(repmat(obj.DParsed.Trans.DT_pe_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_im_idx = permute(repmat(obj.DParsed.Trans.DT_im_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_fo_idx = permute(repmat(obj.DParsed.Trans.DT_fo_idx(:),1,4),[3,1,2]); %1 x trial x chan
+                dt_kd2_idx = permute(repmat(obj.DParsed.Trans.DT_kd2_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_walk = permute(repmat(obj.DParsed.Trans.WalkNumTrans(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_nsamp = permute(repmat(obj.DParsed.Trans.NumSampTrans(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_evnt = permute(repmat(obj.DParsed.Trans.EvntTrans(:),1,4),[3,1,2]); %1 x trial x chan
@@ -1183,6 +1251,7 @@ classdef RWAnalysis2 < handle
                 DT_im_flds = cat(1,DT_im_flds,obj.DParsed.Trans.F_im');
                 DT_fo_idx = cat(2,DT_fo_idx,dt_fo_idx);
                 DT_fo_flds = cat(1,DT_fo_flds,obj.DParsed.Trans.F_fo);
+                DT_kd2_idx = cat(2,DT_kd2_idx,dt_kd2_idx);
                 DT_Walk = cat(2,DT_Walk,dt_walk);
                 DT_NSamp = cat(2,DT_NSamp,dt_nsamp); %number of data samples in walk
                 DT_Evnt = cat(2,DT_Evnt,dt_evnt);
@@ -1211,6 +1280,7 @@ classdef RWAnalysis2 < handle
                 DS_gy = obj.DParsed.Seg.DS_im(:,:,contains(obj.DParsed.Seg.F_im,'gyroY'));
                 DS_wk = obj.DParsed.Seg.WalkNumSeg;
                 DS_in = obj.DParsed.Seg.InFlag;
+                DS_kd2 = obj.DParsed.Seg.DS_kd2;
 
                 DS_ol = obj.DParsed.Seg.Outliers; %these have nans for <-500 condition
                 DS_np(:,DS_ol,:) = [];
@@ -1224,6 +1294,7 @@ classdef RWAnalysis2 < handle
                 DS_gy(:,DS_ol) = [];
                 DS_wk(DS_ol) = [];
                 DS_in(DS_ol) = [];
+                DS_kd2(:,DS_ol) = [];
 
                 DS_stopwk = (DS_wk == obj.StopGoWalks{k}(1));
                 DS_gowk = (DS_wk == obj.StopGoWalks{k}(2));
@@ -1255,6 +1326,10 @@ classdef RWAnalysis2 < handle
                 %outliers should not exist since this is a calculated value
                 ds_kd = median(DS_kd)';
                 ds_kd_norm = ds_kd;
+
+                %KDE2 - outliers should not exist since this is a calculated value
+                ds_kd2 = median(DS_kd2)';
+                ds_kd2_norm = ds_kd2;
                 
                 %this is already processed data (zscore? outliers?)
                 DS_ed(:,any(abs(DS_ed)>3)) = nan; %this appears to be zscore data, so discarding >3std since artifact does appear to occur in this data
@@ -1365,14 +1440,14 @@ classdef RWAnalysis2 < handle
                     %normalized by default to make more gaussian.
                     segtable = table(...
                         ds_pt,ds_ch,DS_wk,DS_stopwk,DS_gowk,DS_in,ds_rgnum,ds_rglbl,ds_chlbl,...
-                        ds_xs_norm,ds_gz_norm,ds_am_norm,ds_kd_norm,ds_ed_norm,ds_gy_norm,...
+                        ds_xs_norm,ds_gz_norm,ds_am_norm,ds_kd_norm,ds_kd2_norm,ds_ed_norm,ds_gy_norm,...
                         ds_wv_norm(:,1),ds_wv_norm(:,2),ds_wv_norm(:,3),ds_wv_norm(:,4),ds_wv_norm(:,5),...
                         ds_mt_norm(:,1),ds_mt_norm(:,2),ds_mt_norm(:,3),ds_mt_norm(:,4),ds_mt_norm(:,5),...
                         ds_pe_norm(:,1),ds_pe_norm(:,2),ds_pe_norm(:,3),ds_pe_norm(:,4),...
                         ds_FR(:,1),ds_FR(:,2),ds_FR(:,3),ds_FR(:,4),ds_FR(:,5),ds_FR(:,6),ds_FR(:,7),ds_FR(:,8),...
                         'VariableNames',...
                         {'Pt','Chan','Walk','StopWalk','GoWalk','InFlag','RegionNum','RegionLabel','ChanLabel',...
-                        'Vel','Fix','Amb','KDE','EDA','HeadTurn',...
+                        'Vel','Fix','Amb','KDE','KDE2','EDA','HeadTurn',...
                         'wvTheta','wvAlpha','wvBeta','wvGamma','wvHG',...
                         'mtTheta','mtAlpha','mtBeta','mtGamma','mtHG',...
                         'peTheta','peAlpha','peBetaL','peBetaH',...
@@ -1394,6 +1469,7 @@ classdef RWAnalysis2 < handle
             DT_gz_idx = reshape(DT_gz_idx,1,[]);
             DT_am_idx = reshape(DT_am_idx,1,[]);
             DT_kd_idx = reshape(DT_kd_idx,1,[]);
+            DT_kd2_idx = reshape(DT_kd2_idx,1,[]);
             DT_wv_idx = reshape(DT_wv_idx,1,[]);
             DT_bi_idx = reshape(DT_bi_idx,1,[]);
             DT_pe_idx = reshape(DT_pe_idx,1,[]);
@@ -1418,6 +1494,7 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.DT_gz_idx = DT_gz_idx;
             obj.MultTrans.DT_am_idx = DT_am_idx;
             obj.MultTrans.DT_kd_idx = DT_kd_idx;
+            obj.MultTrans.DT_kd2_idx = DT_kd2_idx;
             obj.MultTrans.DT_wv_idx = DT_wv_idx;
             obj.MultTrans.DT_bi_idx = DT_bi_idx;
             obj.MultTrans.DT_pe_idx = DT_pe_idx;
@@ -1446,6 +1523,8 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.TimeSec_am = obj.DParsed.Trans.WT_am_sec;
             obj.MultTrans.TimeSamp_kd = obj.DParsed.Trans.WT_kd_samp;
             obj.MultTrans.TimeSec_kd = obj.DParsed.Trans.WT_kd_sec;
+            obj.MultTrans.TimeSamp_kd2 = obj.DParsed.Trans.WT_kd2_samp;
+            obj.MultTrans.TimeSec_kd2 = obj.DParsed.Trans.WT_kd2_sec;
             obj.MultTrans.TimeSamp_wv = obj.DParsed.Trans.WT_wv_samp;
             obj.MultTrans.TimeSec_wv = obj.DParsed.Trans.WT_wv_sec;
             obj.MultTrans.TimeSamp_bi = obj.DParsed.Trans.WT_bi_samp;
@@ -1461,6 +1540,7 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.FS_gz = obj.DParsed.Trans.FS_gz;
             obj.MultTrans.FS_am = obj.DParsed.Trans.FS_am;
             obj.MultTrans.FS_kd = obj.DParsed.Trans.FS_kd;
+            obj.MultTrans.FS_kd2 = obj.DParsed.Trans.FS_kd2;
             obj.MultTrans.FS_wv = obj.DParsed.Trans.FS_wv;
             obj.MultTrans.FS_bi = obj.DParsed.Trans.FS_bi;
             obj.MultTrans.FS_pe = obj.DParsed.Trans.FS_pe;
@@ -1655,6 +1735,7 @@ classdef RWAnalysis2 < handle
             gz_idx = obj.MultTrans.DT_gz_idx(transidx);
             am_idx = obj.MultTrans.DT_am_idx(transidx);
             kd_idx = obj.MultTrans.DT_kd_idx(transidx);
+            kd2_idx = obj.MultTrans.DT_kd2_idx(transidx);
             wv_idx = obj.MultTrans.DT_wv_idx(transidx);
             bi_idx = obj.MultTrans.DT_bi_idx(transidx);
             pe_idx = obj.MultTrans.DT_pe_idx(transidx);
@@ -1672,10 +1753,10 @@ classdef RWAnalysis2 < handle
             ds = obj.MultTrans.Desc(transidx);
             ds_idx = descidx(transidx);
             MT = table(pt',wk',swk',gwk',rg',lb',ch',np_idx',ns',ev',ds',ds_idx',...
-                xs_idx',xs_vchg',gz_idx',am_idx',kd_idx',wv_idx',bi_idx',pe_idx',im_idx',fo_idx',...
+                xs_idx',xs_vchg',gz_idx',am_idx',kd_idx',kd2_idx',wv_idx',bi_idx',pe_idx',im_idx',fo_idx',...
                 'VariableNames',{'patient','walk','stopwalk','gowalk','regionnum',...
                 'regionlabel','chan','npidx','nsamp','evnt','desc','descidx',...
-                'xsidx','xsvchg','gzidx','amidx','kdidx','wvidx','biidx','peidx','imidx','foidx'});
+                'xsidx','xsvchg','gzidx','amidx','kdidx','kd2idx','wvidx','biidx','peidx','imidx','foidx'});
 
             %filter by region (amygdala/anterior hipp)
             if all(regionidx<5)
@@ -1882,6 +1963,10 @@ classdef RWAnalysis2 < handle
             tsec_kd = tsamp_kd./obj.MultTrans.FS_kd;
             ntime_kd = length(tsamp_kd);
 
+            tsamp_kd2 = round(transrng(1)*obj.MultTrans.FS_kd2):round(transrng(2)*obj.MultTrans.FS_kd2);
+            tsec_kd2 = tsamp_kd2./obj.MultTrans.FS_kd2;
+            ntime_kd2 = length(tsamp_kd2);
+
             tsamp_wv = round(transrng(1)*obj.MultTrans.FS_wv):round(transrng(2)*obj.MultTrans.FS_wv); 
             tsec_wv = tsamp_wv./obj.MultTrans.FS_wv;
             freq_wv = obj.MultTrans.Freq;
@@ -1919,12 +2004,14 @@ classdef RWAnalysis2 < handle
             d_gz = nan(size(uPtWkChIdx,1),ntime_gz);
             d_am = nan(size(uPtWkChIdx,1),ntime_am);
             d_kd = nan(size(uPtWkChIdx,1),ntime_kd);
+            d_kd2 = nan(size(uPtWkChIdx,1),ntime_kd2);
             d_wv = nan(size(uPtWkChIdx,1),ntime_wv,nfreq_wv);
             d_ed = nan(size(uPtWkChIdx,1),ntime_bi);
             d_pe = nan(size(uPtWkChIdx,1),ntime_pe,nfreq_pe);
             d_gy = nan(size(uPtWkChIdx,1),ntime_im); %head turn (angular vel)
             d_ex = nan(size(uPtWkChIdx,1),ntime_fo); %fooof exponent
             d_tg = nan(size(uPtWkChIdx,1),ntime_fo); %theta gamma ratio
+            d_of = nan(size(uPtWkChIdx,1),ntime_fo); %fooof offset
             for k=1:size(uPtWkCh,1)
                 idx = find(k==uPtWkChIdx);
                 mt = obj.MultTrans.MT(idx,:);
@@ -1937,6 +2024,7 @@ classdef RWAnalysis2 < handle
                 gzidx = round(mt.gzidx)+tsamp_gz; 
                 amidx = round(mt.amidx)+tsamp_am; 
                 kdidx = round(mt.kdidx)+tsamp_kd; 
+                kd2idx = round(mt.kd2idx)+tsamp_kd2; 
                 wvidx = round(mt.wvidx)+tsamp_wv;
                 biidx = round(mt.biidx)+tsamp_bi;
                 peidx = round(mt.peidx)+tsamp_pe;
@@ -1988,6 +2076,15 @@ classdef RWAnalysis2 < handle
                     d_kd(idx(~ridx),:) = d; %trial x time
                 end
 
+                %KDE2
+                if ~isempty(obj.MultTable{pt}.d_kde2{wk})
+                    d = obj.MultTable{pt}.d_kde2{wk}; %time x chan
+                    ridx = any(kd2idx<1,2)|any(kd2idx>length(d),2)|any(isnan(mt.kd2idx),2); %remove index
+                    kd2idx(ridx,:) = [];
+                    d = reshape(d(kd2idx,:),size(kd2idx,1),size(kd2idx,2));
+                    d_kd2(idx(~ridx),:) = d; %trial x time
+                end
+
                 %Wav
                 if ~isempty(obj.MultTable{pt}.d_wav{wk})
                     d = obj.MultTable{pt}.d_wav{wk}(:,:,ch); %time x freq x chan
@@ -2035,6 +2132,10 @@ classdef RWAnalysis2 < handle
                     d = obj.MultTable{pt}.d_fof{wk}(:,contains(obj.MultTrans.F_fo(pt,:),'theta_gamma'),ch); 
                     d = reshape(d(foidx,:),size(foidx,1),size(foidx,2));
                     d_tg(idx(~ridx),:) = d; %trial x time
+
+                    d = obj.MultTable{pt}.d_fof{wk}(:,contains(obj.MultTrans.F_fo(pt,:),'offset'),ch); 
+                    d = reshape(d(foidx,:),size(foidx,1),size(foidx,2));
+                    d_of(idx(~ridx),:) = d; %trial x time
                 end
 
             end
@@ -2043,12 +2144,14 @@ classdef RWAnalysis2 < handle
             d_gz = permute(d_gz,[2,1]);
             d_am = permute(d_am,[2,1]);
             d_kd = permute(d_kd,[2,1]);
+            d_kd2 = permute(d_kd2,[2,1]);
             d_wv = permute(d_wv,[2,3,1]); %time x freq x trial
             d_ed = permute(d_ed,[2,1]); %time x trial
             d_pe = permute(d_pe,[2,3,1]); %time x freq x trial
             d_gy = permute(d_gy,[2,1]); %time x trial
             d_ex = permute(d_ex,[2,1]);
             d_tg = permute(d_tg,[2,1]);
+            d_of = permute(d_of,[2,1]);
 
             obj.MultTrans.MTd = [];
 
@@ -2057,11 +2160,13 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.d_gz = d_gz;
             obj.MultTrans.MTd.d_am = d_am;
             obj.MultTrans.MTd.d_kd = d_kd;
+            obj.MultTrans.MTd.d_kd2 = d_kd2;
             obj.MultTrans.MTd.d_wv = d_wv;
             obj.MultTrans.MTd.d_ed = d_ed;
             obj.MultTrans.MTd.d_gy = d_gy;
             obj.MultTrans.MTd.d_ex = d_ex;
             obj.MultTrans.MTd.d_tg = d_tg;
+            obj.MultTrans.MTd.d_of = d_of;
             obj.MultTrans.MTd.d_pe1 = squeeze(d_pe(:,1,:)); %theta
             obj.MultTrans.MTd.d_pe2 = squeeze(d_pe(:,2,:)); %alpha
             obj.MultTrans.MTd.d_pe3 = squeeze(d_pe(:,3,:)); %lowbeta
@@ -2072,11 +2177,13 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.tsec_gz = tsec_gz;
             obj.MultTrans.MTd.tsec_am = tsec_am;
             obj.MultTrans.MTd.tsec_kd = tsec_kd;
+            obj.MultTrans.MTd.tsec_kd2 = tsec_kd2;
             obj.MultTrans.MTd.tsec_wv = tsec_wv;
             obj.MultTrans.MTd.tsec_ed = tsec_bi;
             obj.MultTrans.MTd.tsec_gy = tsec_im;
             obj.MultTrans.MTd.tsec_ex = tsec_fo;
             obj.MultTrans.MTd.tsec_tg = tsec_fo;
+            obj.MultTrans.MTd.tsec_of = tsec_fo;
             obj.MultTrans.MTd.tsec_pe1 = tsec_pe;
             obj.MultTrans.MTd.tsec_pe2 = tsec_pe;
             obj.MultTrans.MTd.tsec_pe3 = tsec_pe;
@@ -2087,11 +2194,13 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.tsamp_gz = tsamp_gz;
             obj.MultTrans.MTd.tsamp_am = tsamp_am;
             obj.MultTrans.MTd.tsamp_kd = tsamp_kd;
+            obj.MultTrans.MTd.tsamp_kd2 = tsamp_kd2;
             obj.MultTrans.MTd.tsamp_wv = tsamp_wv;
             obj.MultTrans.MTd.tsamp_ed = tsamp_bi;
             obj.MultTrans.MTd.tsamp_gy = tsamp_im;
             obj.MultTrans.MTd.tsamp_ex = tsamp_fo;
             obj.MultTrans.MTd.tsamp_tg = tsamp_fo;
+            obj.MultTrans.MTd.tsamp_of = tsamp_fo;
             obj.MultTrans.MTd.tsamp_pe1 = tsamp_pe;
             obj.MultTrans.MTd.tsamp_pe2 = tsamp_pe;
             obj.MultTrans.MTd.tsamp_pe3 = tsamp_pe;
@@ -2112,6 +2221,7 @@ classdef RWAnalysis2 < handle
             DS_gz = [];
             DS_am = [];
             DS_kd = [];
+            DS_kd2 = [];
             DS_wv = [];
             DS_bi = [];
             DS_pe = [];
@@ -2150,6 +2260,11 @@ classdef RWAnalysis2 < handle
                 d_kd = obj.DTable.d_kde{m};
                 ntp_kd = obj.DTable.ntp_kde{m}; %ntp in sec
                 fs_kd = obj.DTable.fs_kde(m);
+
+                %KDE2
+                d_kd2 = obj.DTable.d_kde2{m};
+                ntp_kd2 = obj.DTable.ntp_kde2{m}; %ntp in sec
+                fs_kd2 = obj.DTable.fs_kde2(m);
 
                 %Wavelet
                 d_wv = obj.DTable.d_wav{m};
@@ -2215,6 +2330,7 @@ classdef RWAnalysis2 < handle
                 win_seg_gz = win_seg_sec*fs_gz;
                 win_seg_am = win_seg_sec*fs_am;
                 win_seg_kd = win_seg_sec*fs_kd;
+                win_seg_kd2 = win_seg_sec*fs_kd2;
                 win_seg_wv = win_seg_sec*fs_wv;
                 win_seg_bi = win_seg_sec*fs_bi;
                 win_seg_pe = win_seg_sec*fs_pe;
@@ -2245,6 +2361,12 @@ classdef RWAnalysis2 < handle
                     if ~isempty(d_kd)
                         if (T.Start_NTP(k)-ntp_kd(1))<0
                             error('KDE start is after start of walk! This is a problem and needs to be checked.');
+                        end
+                    end
+
+                    if ~isempty(d_kd2)
+                        if (T.Start_NTP(k)-ntp_kd2(1))<0
+                            error('KDE2 start is after start of walk! This is a problem and needs to be checked.');
                         end
                     end
 
@@ -2358,6 +2480,26 @@ classdef RWAnalysis2 < handle
                     end
                     DS_kd = cat(2,DS_kd,d_kd_seg);
 
+                    %kde2 data (make the same size as d_np_seg)
+                    d_kd2_seg = nan(win_seg_kd2,size(d_np_seg,2));
+                    if ~isempty(d_kd2)
+                        [~,start_idx] = min(abs(ntp_kd2 - T.Start_NTP(k))); %start samples for kde
+                        [~,end_idx] = min(abs(ntp_kd2 - T.End_NTP(k)));
+                        dd_kd2 = d_kd2(start_idx:end_idx);
+                        dd_kd2(floor(size(dd_kd2,1)/win_seg_kd2)*win_seg_kd2+1:end,:) = []; %60Hz (4*60=240 -> 4sec)
+                        dd_kd2 = reshape(dd_kd2,win_seg_kd2,[]);
+                        if size(dd_kd2,2)>size(d_np_seg,2)
+                            d_kd2_seg = dd_kd2(:,1:size(d_np_seg,2));
+                            fprintf('KDE2 data for walk %0.0f (in/out segment %0.0f) is longer than NP. Truncating to fit NP.\n',walknum,k);
+                        elseif size(dd_kd2,2)<size(d_np_seg,2)
+                            d_kd2_seg(:,1:size(dd_kd2,2)) = dd_kd2;
+                            fprintf('KDE2 data for walk %0.0f (in/out segment %0.0f) is shorter than NP. Missing time is filled with NaNs.\n',walknum,k);
+                        else
+                            d_kd2_seg = dd_kd2;
+                        end
+                    end
+                    DS_kd2 = cat(2,DS_kd2,d_kd2_seg);
+
                     %wavelet data (make the same size as d_np_seg)
                     d_wv_seg = nan(win_seg_wv,size(d_np_seg,2),length(f_wv),4);
                     if ~isempty(d_wv)
@@ -2457,6 +2599,7 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Seg.DS_gz = DS_gz;
             obj.DParsed.Seg.DS_am = DS_am;
             obj.DParsed.Seg.DS_kd = DS_kd;
+            obj.DParsed.Seg.DS_kd2 = DS_kd2;
             obj.DParsed.Seg.DS_wv = DS_wv;
             obj.DParsed.Seg.DS_bi = DS_bi;
             obj.DParsed.Seg.DS_pe = DS_pe;
@@ -2466,6 +2609,7 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Seg.FS_gz = fs_gz;
             obj.DParsed.Seg.FS_am = fs_am;
             obj.DParsed.Seg.FS_kd = fs_kd;
+            obj.DParsed.Seg.FS_kd2 = fs_kd2;
             obj.DParsed.Seg.FS_wv = fs_wv;
             obj.DParsed.Seg.FS_bi = fs_bi;
             obj.DParsed.Seg.FS_pe = fs_pe;
@@ -2947,6 +3091,36 @@ classdef RWAnalysis2 < handle
 
         end
 
+        function countMarksPerWalk(obj,varargin)
+            %counts how many marks were interpolated in each walk
+            if isempty(obj.MultTable)
+                error('Run loadMultData first!');
+            end
+            warning('off','MATLAB:interp1:NaNstrip');
+
+            MarkCounts = [];
+            for m=1:5 %by patient
+                patientid = regexp(obj.PatientList{m},'(RW)\d{1}','match','once');
+                walknames = dir(obj.RootDir);
+                walknames = walknames(contains({walknames.name},patientid));
+                walknames = regexp({walknames.name},'Walk\d+','match','once');
+                walknames(cellfun(@isempty,walknames)) = [];
+                walknums = cellfun(@str2double,regexp(walknames,'\d+','match','once'));
+                totalwalks = length(walknames);
+                for k=1:totalwalks
+                    fprintf('Loading patient %s walk %d...\n',patientid,k);
+                    walknum = walknums(k);
+                    fname = fullfile(obj.RootDir,sprintf('RWNApp_%s_Walk%0.0f.mat',patientid,walknum));
+                    if isfile(fname)
+                        ss = load(fname);
+                        ts = obj.findMarks(ss.d_np);
+                        mc = table(m,k,length(ts),'VariableNames',{'pt','wlk','cnt'});
+                        MarkCounts = vertcat(MarkCounts,mc);
+                    end
+                end
+            end
+        end %end countMarksPerWalk
+        
     end %methods
 
     %%%%%%%%%%%%%%%%%%%%%
@@ -3184,8 +3358,8 @@ classdef RWAnalysis2 < handle
                 else
                     dxx = dx;
                 end
-                if contains(obj.PredList{1,k},["ex","tg"]) 
-                    dxx = dxx./mean(dxx,1,'omitnan'); %normalize fooof exponent or theta/gamma
+                if contains(obj.PredList{1,k},["ex","tg","of"]) 
+                    dxx = dxx./mean(dxx,1,'omitnan'); %normalize fooof exponent/offset or theta/gamma
                 end
                 if p.predabs
                     if contains(obj.PredList{1,k},'gy')

@@ -157,6 +157,17 @@ else
     kde_file = fullfile(kde_dir(1).folder,kde_dir(1).name);
 end
 
+%KDE2 directory (undergrad event times for synced gopro - redone by Alireza)
+ptnum = regexp(pt,'\d$','match','once');
+wknum = regexp(wk,'\d$','match','once');
+kde2_dir = dir(fullfile(fileparts(pt_dir),'KDEs','BW2_20Raters','KDEs_New',['RWN',ptnum,'_',wknum,'_KDE.csv']));
+if isempty(kde2_dir)
+    disp('kde2_file is missing!');
+    kde2_file = '';
+else
+    kde2_file = fullfile(kde2_dir(1).folder,kde2_dir(1).name);
+end
+
 %biopac
 biopac_dir = dir(fullfile(walk_dir,'Biopac'));
 biopac_header_file = biopac_dir(contains({biopac_dir.name},'header','IgnoreCase',true));
@@ -198,6 +209,7 @@ Files.pupil_imu_file = pupil_imu_file; %pupil phone imu data
 Files.chest_drift_csv_file = chest_drift_csv_file; %chest phone
 Files.frame_comp_file = frame_comp_file;
 Files.kde_file = kde_file;
+Files.kde2_file = kde2_file;
 Files.gopro_synced_vid_file = gopro_synced_vid_file;
 Files.biopac_header_file = biopac_header_file;
 Files.biopac_data_file = biopac_data_file;
