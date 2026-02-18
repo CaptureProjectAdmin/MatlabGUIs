@@ -1,0 +1,10 @@
+fH = figure;
+aH = [];
+t = (0:size(d,1)-1)/250;
+t = t(1:10:end);
+aH(1) = subplot(1,2,1,'parent',fH);
+contourf(t,f_morse,10*log10(pwr_morse(1:10:end,:,1))',100,'linecolor','none','parent',aH(1));
+set(aH(1),'yscale','log','YTick',2.^(1:6),'yticklabel',2.^(1:6),'yminortick','off','clim',[-20,20]);
+aH(2) = subplot(1,2,2,'parent',fH);
+contourf(t,f_super',10*log10(pwr_super(1:10:end,:,1))',100,'linecolor','none','parent',aH(2));
+set(aH(2),'yscale','log','YTick',2.^(1:6),'yticklabel',2.^(1:6),'yminortick','off','clim',[-20,20]);

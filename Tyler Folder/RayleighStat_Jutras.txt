@@ -1,0 +1,16 @@
+phasebins = 0:pi/12:2*pi;
+anglp = histc(phasemat,phasebins);
+anglp = anglp ./ repmat(sum(anglp),size(anglp,1),1);
+unitv = exp(1i*phasemat);
+sumv = squeeze(mean(unitv,1));
+rayleigh = abs(sumv);
+critval = sqrt(-log(0.01)/size(phasemat,1));
+
+clusterfix from buffalo lab for calculating fixations
+https://buffalomemorylab.com/clusterfix
+
+OR
+
+just threshold velocity of eye
+
+align to saccades for lost end period (maybe just right before when fixation goes up)
