@@ -1,7 +1,7 @@
-function PM = calcRWAPerm(pwr,bpwr,trialtype)
+function PM = calcRWAPerm(pwr,bpwr,trialtype,pwr_z)
 %pwr (time x freq x trial), bpwr (1 x freq) -> baseline power, trialtype is
 %-1 or 1 for calculating difference between specgrams or 0 for a single
-%specgram.
+%specgram. pwr_z is mean/std for applying zscore (2 x freq x trial).
 
 ntime = size(pwr,1);
 nfreq = size(pwr,2);
@@ -16,10 +16,18 @@ else
     permtype = 0; %ttest
 end
 
+%This should speed up the permutations by skipping the zscore calculation
+%when the values are 0/1.
+if all(pwr_z(1,:)==0) && all(pwr_z(2,:)==1)
+    zflag = false;
+else
+    zflag = true;
+end
+
 rng('shuffle'); %seed the random stream with clock time
 PM = nan(ntime,nfreq,nperm);
 % wait_msg = parfor_wait(nperm);
-parfor (m=1:nperm,8) %permutations
+parfor m=1:nperm %permutations
 %     wait_msg.Send;
     if permtype %shift
         cutpoint = randi(ntime,[1,ntrials]);
@@ -27,7 +35,11 @@ parfor (m=1:nperm,8) %permutations
         for k=1:ntrials
             pwr_shift(:,:,k) = circshift(pwr(:,:,k),cutpoint(k),1); %time x freq x trial (shift time)
         end
-        PM(:,:,m) = 10*log10(mean(pwr_shift,3,"omitnan")./bpwr); %time x freq;
+        npwr = 10*log10(pwr_shift./bpwr);
+        if zflag
+            npwr = (npwr-pwr_z(1,:,:))./pwr_z(2,:,:);
+        end
+        PM(:,:,m) = squeeze(mean(npwr,3,"omitnan")); %normalized trial avg power in dB (take trial avg in log space)
     else %ttest
         ttshuf = trialtype(randperm(ntrials));
         tnum = squeeze(mean(pwr(:,:,ttshuf==-1),3,"omitnan")-mean(pwr(:,:,ttshuf==1),3,"omitnan")); %trial avg diff (time x freq)
