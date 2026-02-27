@@ -128,12 +128,15 @@ classdef RWAnalysis2 < handle
     %
     % *ITPCGUI:
     %     1) Compute average duration of fixation triggered theta cycle 
-    %     2) Compute average fixation time 
-    %     3) Overlay average fixation data
+    %     2) X Compute average fixation time 
+    %     3) X Overlay average fixation data
     %     4) Compute correlation between filtered theta np data and fixation for each trial
-    %     5) Remove fixation overlap, 
+    %     5) X Remove fixation overlap, 
     %     6) Compute/plot average phase (same for each patient?)(polar histogram of phase angles)
-    %     7) Add checkbox for saccade
+    %     7) X Add checkbox for saccade
+    %     8) Add power and headturn overlay (filter out trials based on headturn)
+    %     9) Add separate figure for boxplot comparison and band-limited itpc
+    %    10) Add checkbox for new saccade detection algorithm
     %
     % *GLMEGUI: data export! (in/out and conf matrix plots, boxplot comparison with pepisode)
     % X Check model fit for fooof over time (done)
@@ -5810,7 +5813,8 @@ classdef RWAnalysis2 < handle
             patienttype = p.patienttype; %'All Patients', '2,4'
             desctype = p.desctype; %close, open, etc. (optional, will skip if empty)
             transrng = p.transrng; %default [-10,10] %window to search fixations
-            nprng = [-1,1]; %window for plotting np data aligned to fixations
+            nprng = [-2,2]; %window for getting np data aligned to fixations
+            npclip = [-1,1]; %window for removing edge artifact and plotting
             pval = p.pval; %default p=0.05
             if isempty(p.clim)
                 climit = [-10,10];
@@ -5984,15 +5988,37 @@ classdef RWAnalysis2 < handle
             % [B,A] = iirnotch(62.5/(obj.MultTrans.FS_np/2),0.012);
 
             %real
-            nan_idx = isnan(D); D(nan_idx) = 0;
+            nan_idx = any(isnan(D)); D(:,nan_idx) = [];
+            D = D - mean(D,1);
             % D = filtfilt(B,A,D);
             [f,~,cfs] = morseSpecGram(D,FS_np,[2,32]); %2 to 32Hz
             cfs(permute(repmat(nan_idx,1,1,length(f)),[1,3,2])) = nan; %time x freq x trial
+            
+            %Removing edge artifact from wavelet transform (clipping -1 to 1)
+            idx = tsec_np>=npclip(1) & tsec_np<=npclip(2);
+            D = D(idx,:);
+            cfs = cfs(idx,:,:);
+            tsamp_np = tsamp_np(idx);
+            tsec_np = tsec_np(idx);
+            ntime_np = length(tsamp_np);
+
+            idx = tsec_gz_npwin>=npclip(1) & tsec_gz_npwin<=npclip(2);
+            GZ = GZ(idx,:);
+            tsamp_gz_npwin = tsamp_gz_npwin(idx);
+            tsec_gz_npwin = tsec_gz_npwin(idx);
+            ntime_gz_npwin = length(tsamp_gz_npwin);
+
             % itpc = exp(1i*(angle(cfs)));
             itpc = cfs./abs(cfs); %same as above but faster
             itpc = mean(itpc,3,'omitnan'); %mean across trials in complex
             % itpc = smoothdata(itpc,1,'movmean',3); %smoothing across time in complex
             itpc = abs(itpc); %inter-trial phase coherence -> same as plv but mean across trials (no angle difference)
+
+            pwr = abs(cfs).^2;
+            pwr = pwr./median(pwr,1,"omitnan"); %full epoch norm (time x freq x trial)
+            pwr = 10*log10(pwr);
+            pwr = squeeze(mean(pwr,3,"omitnan")); %normalized trial avg power in dB (take trial avg in log space)
+            pwr = (pwr-mean(pwr(:)))./std(pwr(:));
 
             %permutation
             % PM = calcRWAITPCPerm(cfs);
@@ -6047,7 +6073,7 @@ classdef RWAnalysis2 < handle
 
             %Plotting
             fH = figure('Position',[50,50,800,800],'visible','on');
-            tl = tiledlayout(2,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
+            tl = tiledlayout(3,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
 
             aH = nexttile(tl,1);
             fH.UserData.aH1 = aH;
@@ -6090,6 +6116,25 @@ classdef RWAnalysis2 < handle
             ylabel(cb,'Zscore')
 
             aH = nexttile(tl,2);
+            fH.UserData.aH3 = aH;
+            colormap(aH,"jet");
+            hold(aH,'on');
+            contourf(tsec_np,f,pwr',100,'linecolor','none','parent',aH);
+            set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
+            plot(aH,[0,0],[2,32],'--k','LineWidth',2);
+            axis(aH,[-1,1,2,32]);
+            climit = prctile(abs(pwr(:)),99);
+            climit = [-climit,climit];
+            clim(aH,climit)
+            xlabel(aH,'sec');
+            ylabel(aH,'Hz');
+            cb = colorbar(aH);
+            cblims = [round(cb.Limits(1),1),0,round(cb.Limits(2),1)];
+            cb.Ticks = cblims;
+            cb.TickLabels = cblims;
+            ylabel(cb,'Zscore')
+
+            aH = nexttile(tl,3);
             fH.UserData.aH2 = aH;
             d = D-mean(D,'omitnan');
             md = mean(d,2,'omitnan');
