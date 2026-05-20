@@ -116,6 +116,17 @@ else
     gaze_csv_file = fullfile(gaze_csv_file.folder,gaze_csv_file.name);
 end
 
+%gaze2 directory (saccades and fixations - redone by Alireza)
+ptnum = regexp(pt,'\d$','match','once');
+wknum = regexp(wk,'\d$','match','once');
+gaze2_dir = dir(fullfile(fileparts(pt_dir),'SaccadesandFixations',['R',ptnum,'_W',wknum,'*.mat']));
+if isempty(gaze2_dir)
+    disp('gaze2_file is missing!');
+    gaze2_file = '';
+else
+    gaze2_file = fullfile(gaze2_dir(1).folder,gaze2_dir(1).name);
+end
+
 %gopro
 gopro_dir = dir(fullfile(walk_dir,"Gopro"));
 gopro_vid_file = gopro_dir(find(contains({gopro_dir.name},'combined','IgnoreCase',true) & contains({gopro_dir.name},'.mp4','IgnoreCase',true),1));
@@ -204,6 +215,7 @@ Files.chest_ambient_csv_file = chest_ambient_csv_file; %chest phone
 Files.chest_accel_csv_file = chest_accel_csv_file; %chest phone
 Files.accel_csv_file = accel_csv_file; %pupil phone
 Files.gaze_csv_file = gaze_csv_file; %reprocessed
+Files.gaze2_file = gaze2_file; %reprocessed by alireza
 Files.pupil_gaze_file = pupil_gaze_file; %pupil phone unprocessed (no fixations)
 Files.pupil_imu_file = pupil_imu_file; %pupil phone imu data
 Files.chest_drift_csv_file = chest_drift_csv_file; %chest phone

@@ -100,6 +100,7 @@ classdef RWAnalysis2 < handle
     %     9) box around PeT (done)
     %     10) eventtable/chan gui frontend (done)
     %     11) make mp4 (stitch audio/video automatically) (done)
+    %     12) *ability to toggle background and font color
     % 
     % *SpecgramGUI: 
     %     1) X theta(4-8)/gamma(30-85) ratio boxplot (show correlation with fooofex and add as another predictor variable for transitions/glme) (done)
@@ -125,18 +126,33 @@ classdef RWAnalysis2 < handle
     %    21) X Double check difference calculation (also try normalizing across all conditions in the difference) (done)
     %    22) X Align to saccade onset/offset for given event (build GUI!) (time window, beg/end) 
     %    23) X Consider zscoring by freq band after the dB norm when aggregating across patient/channel
+    %    24) X Bug in figure saving (does not save .fig) -> this worked for me
+    %    25) X Add power overlay for canonical freq bands (another option in dropdown -> partially finished - need to fix difference gui) (done) 
+    %    26) X Error when All is selected from dropdown and a new plot is generated (done)
+    %    27) X Add button to create new fig showing overlays as subplot (add zero horizontal line to power overlays to see significance)
+    %    28) Convert boxplot to barplot with standard error plus dots for each data point (add dot for each channel) and add single bar if second box is empty
+    %    29) Add permutation test for the barplots
     %
     % *ITPCGUI:
     %     1) Compute average duration of fixation triggered theta cycle 
     %     2) X Compute average fixation time 
     %     3) X Overlay average fixation data
-    %     4) Compute correlation between filtered theta np data and fixation for each trial
+    %     4) X Compute correlation between filtered theta np data and fixation for each trial
     %     5) X Remove fixation overlap, 
     %     6) Compute/plot average phase (same for each patient?)(polar histogram of phase angles)
     %     7) X Add checkbox for saccade
-    %     8) Add power and headturn overlay (filter out trials based on headturn)
-    %     9) Add separate figure for boxplot comparison and band-limited itpc
-    %    10) Add checkbox for new saccade detection algorithm
+    %     8) X Add power and headturn overlay (filter out trials based on headturn)
+    %     9) X Add separate figure for 2D plot of band-limited itpc with significance bar (done)
+    %    10) X Add checkbox for new saccade detection algorithm (done)
+    %    11) X Add filter for long fixations vs short fixations to look for freq change in itpc (done) 
+    %    12) X Add fixation/saccade to title!! (done)
+    %    13) X Add full walk normalization to power and add controls to gui (done)
+    %    14) Add difference calculation
+    %    15) X 2D bootstrap was out of range with mean when fixations are aligned with doorways (potential fix by commented out since it takes a long time to compute)
+    %    16) Add overlap (fix) and fixation duration to title
+    %    17) Check average fixation duration in title under high/low durations
+    %    18) For overlap transitions, need to add corresponding description
+    %    19) Metrix for excluding overlapping fixations
     %
     % *GLMEGUI: data export! (in/out and conf matrix plots, boxplot comparison with pepisode)
     % X Check model fit for fooof over time (done)
@@ -152,6 +168,7 @@ classdef RWAnalysis2 < handle
         ChanLabels; InOutTimes; DTable; DisabledWalks; FB; Vid; RegionTable;
         StopGoWalks; AnalysisFile; WinSegSec; WinTransSec; 
         MultTable; MultSeg; MultTrans; PredList; PredYlim; PredYscale; UniqueEvents;
+        ITPC; FreqBands; FreqBandLabels;
     end
 
     %%%%%%%%%%%%%%%%%%%
@@ -199,21 +216,30 @@ classdef RWAnalysis2 < handle
             ];
 
             %List of predictor variables available for analysis. When new
-            %predictors are added, this list needs to be updated
+            %predictors are added, this list needs to be updated. The
+            %canonical freqs were added as predictor overlays (Theta,
+            %Alpha, Beta, Gamma, HG) for the plotting only. These don't
+            %follow the standard predictor pipeline and are calculated
+            %direction in the plotting functions.
             obj.PredList = [...
-                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg','of','kd2','ac'};...
-                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR','FooofOf','KDE2','ACC'}];
+                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg','of','kd2','ac','th','al','be','ga','hg'};...
+                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR','FooofOf','KDE2','ACC','Theta','Alpha','Beta','Gamma','HG'};...
+                {'Velocity (m/s)','Fixation Percentage','Event Boundary Agreement','Relative Luminance','Normalized Phasic EDA','P-Episode Theta','P-Episode Alpha','P-Episode Low Beta','P-Episode High Beta','Head-Turn (rad/sec?)','Normalized Fooof Exponent','Evoked Potential (mV?)','Theta-Gamma Ratio','Normalized Fooof Offset','Event Boundary Agreement','Acceleration (m/s^2)','Zscore Power','Zscore Power','Zscore Power','Zscore Power','Zscore Power'};...
+                ];
 
             %List of ylimits for predictor variables. This is used to
             %adjust ylim of predictor overlay plots in
             %plotMultTransSpecGramPerm.
             obj.PredYlim = [[0,1.5];[0,1];[1,7];[0,500];[-0.2,0.5];[0,0.3];...
                 [0,0.3];[0,0.3];[0,0.3];[0,40];[0.9,1.1];[-100,100];...
-                [0.7,1.3];[0.9,1.1];[0.02,0.2];[-1.5,1.5]];
+                [0.7,1.3];[0.9,1.1];[0.02,0.2];[-1.5,1.5];[-10,10];[-10,10];[-10,10];[-10,10];[-10,10]];
 
             %Scale factor for generating list of y offsets for plotting a
             %raster of zscored predictor variables.
             obj.PredYscale = 5;
+
+            obj.FreqBands = [4,8;8,12;12,30;30,70;70,120]; 
+            obj.FreqBandLabels = {'Theta','Alpha','Beta','Gamma','HG'};
 
             %Finding regions
             obj.RegionTable = [];
@@ -253,7 +279,8 @@ classdef RWAnalysis2 < handle
                 'KDEPeakHighTercile','KDEPeakMidTercile','KDEPeakLowTercile','KDETrough',...
                 'EDAPeakAll','EDAPeakHigh','EDAPeakLow','EDATrough','HeadRotPeakAll','HeadRotPeakHigh',...
                 'HeadRotPeakLow','HeadRotPeakLeft','HeadRotPeakRight','KDE2PeakAll','KDE2PeakHigh',...
-                'KDE2PeakLow','KDE2PeakHighTercile','KDE2PeakMidTercile','KDE2PeakLowTercile','KDE2Trough'});
+                'KDE2PeakLow','KDE2PeakHighTercile','KDE2PeakMidTercile','KDE2PeakLowTercile','KDE2Trough',...
+                'LMFirstFixation'});
             
         end
 
@@ -298,7 +325,8 @@ classdef RWAnalysis2 < handle
             p.plottrials = false; %plot individual trials for a specgram for the specified trialsfreqrng
             p.trialsfreqrng = []; %avg freq band in Hz for plotting specgram trials
             p.plotpowercomp = false; %boxplot comparison of mean power across trials for two rectangular regions in a spectrogram
-            p.plotfooofcomp = false; %boxplot comparison of fooof exponenet across trials for x-values of the two rectangular regions (y-value or freq is not constrained)
+            p.plotfooofcomp = false; %boxplot comparison of fooof exponent across trials for x-values of the two rectangular regions (y-value or freq is not constrained)
+            p.plotbox1bar = false; %using box1, plot a bin with standard error bars
             p.boxcomprng = []; %rows are box1/box2, cols are time/freq limits for each box
             p.predtype = ''; %predictor type -> Vel, Fix, KDE, Amb, EDA (plotMultInOutPred)
             p.predidxs = []; %vector of indices for overlay plot of predictors in plotMultTransSpecGramPerm
@@ -319,6 +347,8 @@ classdef RWAnalysis2 < handle
             p.downsampleitpc = false;
             p.saccadeflag = false; %align to saccades instead of fixations for itpc
             p.rmfixoverlap = false; %remove overlapping fixations or saccades for itpc
+            p.itpcfixdur = ''; %high, low, or empty (filters fixations/saccades by duration)
+            p.alirezafix = false; %use alireza fixations
 
             if ~all(ismember(InputNames,[PropNames;fieldnames(p)]))
                 error('Input names are incorrect!')
@@ -371,7 +401,7 @@ classdef RWAnalysis2 < handle
 
             %[notchB,notchA] = iirnotch(60/125,0.012);
             
-            obj.DTable = cell(TotalWalks,38);
+            obj.DTable = cell(TotalWalks,42);
             for k=1:TotalWalks
                 fprintf('Loading patient %s walk %d...\n',obj.PatientID,k);
                 
@@ -569,11 +599,12 @@ classdef RWAnalysis2 < handle
                         %Full walk wavelet specgram (smoothed, downsampled, median normalized)
                         fprintf('Calculating wavelet transform for %s walk %d\n',obj.PatientID,k)
                         d = SS.d_np; nan_idx = isnan(d); d(nan_idx) = 0;
-                        % [f,~,cfs] = morseSpecGram(d,SS.fs_np,[2,120]); %2 to 120Hz
-                        [f,~,cfs] = Spectrogram_Superlet(d,SS.fs_np,[2,120]); %2 to 120Hz
+                        [f,~,cfs] = morseSpecGram(d,SS.fs_np,[2,120]); %2 to 120Hz
+                        % [f,~,cfs] = Spectrogram_Superlet(d,SS.fs_np,[2,120]); %2 to 120Hz
                         cfs(permute(repmat(nan_idx,1,1,length(f)),[1,3,2])) = nan; %time x freq x chan
                         pwr = abs(cfs).^2;
-                        pwr = smoothdata(pwr,1,'movmean',250*obj.WinSegSec); %smooth across time (this handles nans better than smooth3) (~0.22Hz -> 0.443/2sec cutoff for 2sec window -> might want to decrease this!)
+                        % pwr = smoothdata(pwr,1,'movmean',250*obj.WinSegSec); %smooth across time (this handles nans better than smooth3) (~0.22Hz -> 0.443/2sec cutoff for 2sec window -> might want to decrease this!)
+                        pwr = smoothdata(pwr,1,'movmean',250*0.03); %testing for itpceye power calculation
                         pwr = pwr./median(pwr,1,"omitnan"); %full epoch norm (time x freq x chan)
 
                         %Realistically only need a 12.5Hz lowpass antialias
@@ -782,6 +813,14 @@ classdef RWAnalysis2 < handle
                             SS.evnts_tbl = sortrows(SS.evnts_tbl,"NTP");
                         end
 
+                        %Gaze2 (modified by Alireza)
+                        if isfield(SS,'ntp_gaze2')
+                            obj.DTable(k,39) = {SS.d_gaze2_fix};
+                            obj.DTable(k,40) = {SS.d_gaze2_sac};
+                            obj.DTable(k,41) = {SS.ntp_gaze2};
+                            if isempty(SS.fs_gaze2); obj.DTable(k,42) = {200}; else; obj.DTable(k,42) = {SS.fs_gaze2}; end
+                        end
+
                         ptnum = str2double(regexp(obj.PatientID,'\d+$','match','once'));
 
                         SS.evnts_tbl =  addvars(SS.evnts_tbl,repmat(ptnum,size(SS.evnts_tbl,1),1),'NewVariableNames','Patient','Before','Event');
@@ -821,6 +860,7 @@ classdef RWAnalysis2 < handle
                 'd_imu','ntp_imu','fs_imu',...
                 'd_fof','ntp_fof','fs_fof','f_fof',...
                 'd_kde2','ntp_kde2','fs_kde2',...
+                'd_gaze2_fix','d_gaze2_sac','ntp_gaze2','fs_gaze2',...
                 });
 
         end %loadData
@@ -929,6 +969,7 @@ classdef RWAnalysis2 < handle
             DT_im = []; DT_im_idx = []; %imu
             DT_fo = []; DT_fo_idx = []; %fooof
             DT_kd2 = []; DT_kd2_idx = []; %kde2 modified by alireza
+            DT_gz2_fix = []; DT_gz2_sac = []; DT_gz2_idx = []; %fixation/saccade modified by alireza
             EvntTrans = {}; %event type
             DescTrans = {}; %event description
             WalkNumTrans = []; %walk number for transitions
@@ -1004,6 +1045,12 @@ classdef RWAnalysis2 < handle
                 ntp_kd2 = obj.DTable.ntp_kde2{m}; %ntp in sec
                 fs_kd2 = obj.DTable.fs_kde2(m);
 
+                %Gaze2
+                d_gz2_fix = obj.DTable.d_gaze2_fix{m};
+                d_gz2_sac = obj.DTable.d_gaze2_sac{m};
+                ntp_gz2 = obj.DTable.ntp_gaze2{m}; %ntp in sec
+                fs_gz2 = obj.DTable.fs_gaze2(m);
+
                 %12sec window around transition
                 win_trans_sec = obj.WinTransSec; %sec
                 ntp = dbb.NTP; %all transitions types
@@ -1020,6 +1067,7 @@ classdef RWAnalysis2 < handle
                 win_trans_im = (-win_trans_sec*fs_im:win_trans_sec*fs_im); d_im_trans = nan(length(win_trans_im),length(ntp),length(f_im)); d_im_trans_idx = nan(length(ntp),1);
                 win_trans_fo = (-win_trans_sec*fs_fo:win_trans_sec*fs_fo); d_fo_trans = nan(length(win_trans_fo),length(ntp),length(f_fo),4); d_fo_trans_idx = nan(length(ntp),1);
                 win_trans_kd2 = (-win_trans_sec*fs_kd2:win_trans_sec*fs_kd2); d_kd2_trans = nan(length(win_trans_kd2),length(ntp)); d_kd2_trans_idx = nan(length(ntp),1);
+                win_trans_gz2 = (-win_trans_sec*fs_gz2:win_trans_sec*fs_gz2); d_gz2_fix_trans = nan(length(win_trans_gz2),length(ntp)); d_gz2_sac_trans = nan(length(win_trans_gz2),length(ntp)); d_gz2_trans_idx = nan(length(ntp),1);
                 t_xs = win_trans_xs./fs_xs; %for velocity change calculation
                 t_xs_idx = t_xs>-5 & t_xs<5; %only focus on change in vel for +-5sec
                 d_xs_vchg = nan(length(ntp),1); %percent velocity change
@@ -1147,6 +1195,19 @@ classdef RWAnalysis2 < handle
                             fprintf('Trans segment %0.0f for walk %0.0f is out of range of kde2 data. Filling with NaNs.\n',k,walknum);
                         end
                     end
+
+                    %Gaze2
+                    [~,midx] = min(abs(ntp_gz2-ntp(k)));
+                    if ~isempty(midx)
+                        if (midx+win_trans_gz2(1))>=1 && (midx+win_trans_gz2(end))<=length(d_gz2_fix)
+                            d_gz2_trans_idx(k) = midx;
+                            d_gz2_fix_trans(:,k) = d_gz2_fix(midx+win_trans_gz2);
+                            d_gz2_sac_trans(:,k) = d_gz2_sac(midx+win_trans_gz2);
+                        else
+                            fprintf('Trans segment %0.0f for walk %0.0f is out of range of gaze2 data. Filling with NaNs.\n',k,walknum);
+                        end
+                    end
+
                 end %ntp loop
                 DT_np = cat(2,DT_np,d_np_trans);
                 DT_np_idx = cat(1,DT_np_idx,d_np_trans_idx);
@@ -1171,6 +1232,9 @@ classdef RWAnalysis2 < handle
                 DT_fo_idx = cat(1,DT_fo_idx,d_fo_trans_idx);
                 DT_kd2 = cat(2,DT_kd2,d_kd2_trans);
                 DT_kd2_idx = cat(1,DT_kd2_idx,d_kd2_trans_idx);
+                DT_gz2_fix = cat(2,DT_gz2_fix,d_gz2_fix_trans);
+                DT_gz2_sac = cat(2,DT_gz2_sac,d_gz2_sac_trans);
+                DT_gz2_idx = cat(1,DT_gz2_idx,d_gz2_trans_idx);
                 EvntTrans = cat(1,EvntTrans,evnt);
                 DescTrans = cat(1,DescTrans,desc);
                 WalkNumTrans = cat(1,WalkNumTrans,ones(size(d_np_trans,2),1).*walknum);
@@ -1201,6 +1265,10 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.DT_fo_idx = DT_fo_idx;
             obj.DParsed.Trans.DT_kd2 = DT_kd2;
             obj.DParsed.Trans.DT_kd2_idx = DT_kd2_idx;
+            obj.DParsed.Trans.DT_gz2_fix = DT_gz2_fix;
+            obj.DParsed.Trans.DT_gz2_sac = DT_gz2_sac;
+            obj.DParsed.Trans.DT_gz2_idx = DT_gz2_idx;
+
             obj.DParsed.Trans.WT_np_samp = win_trans_np;
             obj.DParsed.Trans.WT_np_sec = win_trans_np/fs_np;
             obj.DParsed.Trans.WT_xs_samp = win_trans_xs;
@@ -1223,6 +1291,9 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.WT_fo_sec = win_trans_fo/fs_fo;
             obj.DParsed.Trans.WT_kd2_samp = win_trans_kd2;
             obj.DParsed.Trans.WT_kd2_sec = win_trans_kd2/fs_kd2;
+            obj.DParsed.Trans.WT_gz2_samp = win_trans_gz2;
+            obj.DParsed.Trans.WT_gz2_sec = win_trans_gz2/fs_gz2;
+
             obj.DParsed.Trans.FS_np = fs_np;
             obj.DParsed.Trans.FS_xs = fs_xs;
             obj.DParsed.Trans.FS_gz = fs_gz;
@@ -1239,6 +1310,8 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Trans.FS_fo = fs_fo;
             obj.DParsed.Trans.F_fo = f_fo; %field names for fooof data
             obj.DParsed.Trans.FS_kd2 = fs_kd2;
+            obj.DParsed.Trans.FS_gz2 = fs_gz2;
+
             obj.DParsed.Trans.EvntTrans = EvntTrans;
             obj.DParsed.Trans.DescTrans = DescTrans;
             obj.DParsed.Trans.WalkNumTrans = WalkNumTrans;
@@ -1259,7 +1332,7 @@ classdef RWAnalysis2 < handle
             DT_gz_idx = []; DT_am_idx = []; DT_kd_idx = []; DT_wv_idx = [];
             DT_bi_idx = []; DT_bi_flds = {}; DT_pe_idx = []; 
             DT_im_idx = []; DT_im_flds = {}; DT_fo_idx = []; DT_fo_flds = {};
-            DT_kd2_idx = [];
+            DT_kd2_idx = []; DT_gz2_idx = [];
             DT_Walk = []; DT_Evnt = []; DT_Desc = []; DT_StopWalk = []; 
             DT_GoWalk = []; DT_OL = []; DT_Region = []; DT_RegionLabel = []; DT_NSamp = []; %number of data samples in walk
             DT_Chan = []; DT_ChanLabel = []; DT_Patient = []; 
@@ -1284,6 +1357,7 @@ classdef RWAnalysis2 < handle
                 dt_xs_idx = permute(repmat(obj.DParsed.Trans.DT_xs_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_xs_vchg = permute(repmat(obj.DParsed.Trans.DT_xs_vchg(:),1,4),[3,1,2]); %1 x trial x chan (used to filter trials by percentage velocity change)
                 dt_gz_idx = permute(repmat(obj.DParsed.Trans.DT_gz_idx(:),1,4),[3,1,2]); %1 x trial x chan
+                dt_gz2_idx = permute(repmat(obj.DParsed.Trans.DT_gz2_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_am_idx = permute(repmat(obj.DParsed.Trans.DT_am_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_kd_idx = permute(repmat(obj.DParsed.Trans.DT_kd_idx(:),1,4),[3,1,2]); %1 x trial x chan
                 dt_wv_idx = permute(repmat(obj.DParsed.Trans.DT_wv_idx(:),1,4),[3,1,2]); %1 x trial x chan
@@ -1311,6 +1385,7 @@ classdef RWAnalysis2 < handle
                 DT_xs_idx = cat(2,DT_xs_idx,dt_xs_idx);
                 DT_xs_vchg = cat(2,DT_xs_vchg,dt_xs_vchg);
                 DT_gz_idx = cat(2,DT_gz_idx,dt_gz_idx);
+                DT_gz2_idx = cat(2,DT_gz2_idx,dt_gz2_idx);
                 DT_am_idx = cat(2,DT_am_idx,dt_am_idx);
                 DT_kd_idx = cat(2,DT_kd_idx,dt_kd_idx);
                 DT_wv_idx = cat(2,DT_wv_idx,dt_wv_idx);
@@ -1342,6 +1417,8 @@ classdef RWAnalysis2 < handle
                 DS_np = obj.DParsed.Seg.DS_np;
                 DS_xs = obj.DParsed.Seg.DS_xs;
                 DS_gz = obj.DParsed.Seg.DS_gz; %boolean for fixation/no fixation
+                DS_gz2_fix = obj.DParsed.Seg.DS_gz2_fix; %boolean for fixation
+                DS_gz2_sac = obj.DParsed.Seg.DS_gz2_sac; %boolean for saccade
                 DS_am = obj.DParsed.Seg.DS_am;
                 DS_kd = obj.DParsed.Seg.DS_kd;
                 DS_wv = obj.DParsed.Seg.DS_wv;
@@ -1357,6 +1434,8 @@ classdef RWAnalysis2 < handle
                 DS_np(:,DS_ol,:) = [];
                 DS_xs(:,DS_ol) = [];
                 DS_gz(:,DS_ol) = [];
+                DS_gz2_fix(:,DS_ol) = [];
+                DS_gz2_sac(:,DS_ol) = [];
                 DS_am(:,DS_ol) = [];
                 DS_kd(:,DS_ol) = [];
                 DS_wv(:,DS_ol,:,:) = [];
@@ -1387,6 +1466,12 @@ classdef RWAnalysis2 < handle
                 % ds_gz(ds_gz==1) = max(ds_gz(ds_gz<1));
                 % ds_gz_norm = norminv(ds_gz); 
                 % ds_gz_norm = atanh((ds_gz-0.5)*2); %basically does the same as norminv
+
+                %gaze2
+                ds_gz2_fix = mean(DS_gz2_fix)';
+                ds_gz2_sac = mean(DS_gz2_sac)';
+                ds_gz2_fix_norm = ds_gz2_fix;
+                ds_gz2_sac_norm = ds_gz2_sac;
 
                 %raw data from a sensor, so need to reject outliers
                 ds_am = median(DS_am)';
@@ -1512,14 +1597,14 @@ classdef RWAnalysis2 < handle
                     %normalized by default to make more gaussian.
                     segtable = table(...
                         ds_pt,ds_ch,DS_wk,DS_stopwk,DS_gowk,DS_in,ds_rgnum,ds_rglbl,ds_chlbl,...
-                        ds_xs_norm,ds_gz_norm,ds_am_norm,ds_kd_norm,ds_kd2_norm,ds_ed_norm,ds_gy_norm,...
+                        ds_xs_norm,ds_gz_norm,ds_gz2_fix_norm,ds_gz2_sac_norm,ds_am_norm,ds_kd_norm,ds_kd2_norm,ds_ed_norm,ds_gy_norm,...
                         ds_wv_norm(:,1),ds_wv_norm(:,2),ds_wv_norm(:,3),ds_wv_norm(:,4),ds_wv_norm(:,5),...
                         ds_mt_norm(:,1),ds_mt_norm(:,2),ds_mt_norm(:,3),ds_mt_norm(:,4),ds_mt_norm(:,5),...
                         ds_pe_norm(:,1),ds_pe_norm(:,2),ds_pe_norm(:,3),ds_pe_norm(:,4),...
                         ds_FR(:,1),ds_FR(:,2),ds_FR(:,3),ds_FR(:,4),ds_FR(:,5),ds_FR(:,6),ds_FR(:,7),ds_FR(:,8),...
                         'VariableNames',...
                         {'Pt','Chan','Walk','StopWalk','GoWalk','InFlag','RegionNum','RegionLabel','ChanLabel',...
-                        'Vel','Fix','Amb','KDE','KDE2','EDA','HeadTurn',...
+                        'Vel','Fix','Fix2','Sac2','Amb','KDE','KDE2','EDA','HeadTurn',...
                         'wvTheta','wvAlpha','wvBeta','wvGamma','wvHG',...
                         'mtTheta','mtAlpha','mtBeta','mtGamma','mtHG',...
                         'peTheta','peAlpha','peBetaL','peBetaH',...
@@ -1543,6 +1628,7 @@ classdef RWAnalysis2 < handle
             DT_xs_idx = reshape(DT_xs_idx,1,[]);
             DT_xs_vchg = reshape(DT_xs_vchg,1,[]);
             DT_gz_idx = reshape(DT_gz_idx,1,[]);
+            DT_gz2_idx = reshape(DT_gz2_idx,1,[]);
             DT_am_idx = reshape(DT_am_idx,1,[]);
             DT_kd_idx = reshape(DT_kd_idx,1,[]);
             DT_kd2_idx = reshape(DT_kd2_idx,1,[]);
@@ -1568,6 +1654,7 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.DT_xs_idx = DT_xs_idx;
             obj.MultTrans.DT_xs_vchg = DT_xs_vchg;
             obj.MultTrans.DT_gz_idx = DT_gz_idx;
+            obj.MultTrans.DT_gz2_idx = DT_gz2_idx;
             obj.MultTrans.DT_am_idx = DT_am_idx;
             obj.MultTrans.DT_kd_idx = DT_kd_idx;
             obj.MultTrans.DT_kd2_idx = DT_kd2_idx;
@@ -1589,12 +1676,15 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.Chan = DT_Chan;
             obj.MultTrans.ChanLabel = DT_ChanLabel;
             obj.MultTrans.Patient = DT_Patient;
+
             obj.MultTrans.TimeSamp_np = obj.DParsed.Trans.WT_np_samp;
             obj.MultTrans.TimeSec_np = obj.DParsed.Trans.WT_np_sec;
             obj.MultTrans.TimeSamp_xs = obj.DParsed.Trans.WT_xs_samp;
             obj.MultTrans.TimeSec_xs = obj.DParsed.Trans.WT_xs_sec;
             obj.MultTrans.TimeSamp_gz = obj.DParsed.Trans.WT_gz_samp;
             obj.MultTrans.TimeSec_gz = obj.DParsed.Trans.WT_gz_sec;
+            obj.MultTrans.TimeSamp_gz2 = obj.DParsed.Trans.WT_gz2_samp;
+            obj.MultTrans.TimeSec_gz2 = obj.DParsed.Trans.WT_gz2_sec;
             obj.MultTrans.TimeSamp_am = obj.DParsed.Trans.WT_am_samp;
             obj.MultTrans.TimeSec_am = obj.DParsed.Trans.WT_am_sec;
             obj.MultTrans.TimeSamp_kd = obj.DParsed.Trans.WT_kd_samp;
@@ -1611,9 +1701,11 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.TimeSec_im = obj.DParsed.Trans.WT_im_sec;
             obj.MultTrans.TimeSamp_fo = obj.DParsed.Trans.WT_fo_samp;
             obj.MultTrans.TimeSec_fo = obj.DParsed.Trans.WT_fo_sec;
+
             obj.MultTrans.FS_np = obj.DParsed.Trans.FS_np;
             obj.MultTrans.FS_xs = obj.DParsed.Trans.FS_xs;
             obj.MultTrans.FS_gz = obj.DParsed.Trans.FS_gz;
+            obj.MultTrans.FS_gz2 = obj.DParsed.Trans.FS_gz2;
             obj.MultTrans.FS_am = obj.DParsed.Trans.FS_am;
             obj.MultTrans.FS_kd = obj.DParsed.Trans.FS_kd;
             obj.MultTrans.FS_kd2 = obj.DParsed.Trans.FS_kd2;
@@ -1622,10 +1714,12 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.FS_pe = obj.DParsed.Trans.FS_pe;
             obj.MultTrans.FS_im = obj.DParsed.Trans.FS_im;
             obj.MultTrans.FS_fo = obj.DParsed.Trans.FS_fo;
+
             obj.MultTrans.F_bi = DT_bi_flds;
             obj.MultTrans.F_im = DT_im_flds;
             obj.MultTrans.F_fo = DT_fo_flds;
             obj.MultTrans.F_pe = obj.DParsed.Trans.F_pe; %freq bands for pepisode
+
             obj.MultTrans.Freq = obj.DParsed.Trans.F_wv; %freq vector (same for all datasets)
             obj.MultTrans.WinSegSec = obj.WinSegSec; %Also smoothing kernel for specgrams in trans analysis
             obj.MultTrans.WinTransSec = obj.WinTransSec;
@@ -1814,6 +1908,7 @@ classdef RWAnalysis2 < handle
             xs_idx = obj.MultTrans.DT_xs_idx(transidx);
             xs_vchg = obj.MultTrans.DT_xs_vchg(transidx); %percent velocity change
             gz_idx = obj.MultTrans.DT_gz_idx(transidx);
+            gz2_idx = obj.MultTrans.DT_gz2_idx(transidx);
             am_idx = obj.MultTrans.DT_am_idx(transidx);
             kd_idx = obj.MultTrans.DT_kd_idx(transidx);
             kd2_idx = obj.MultTrans.DT_kd2_idx(transidx);
@@ -1834,10 +1929,10 @@ classdef RWAnalysis2 < handle
             ds = obj.MultTrans.Desc(transidx);
             ds_idx = descidx(transidx);
             MT = table(pt',wk',swk',gwk',rg',lb',ch',np_idx',ns',ev',ds',ds_idx',...
-                xs_idx',xs_vchg',gz_idx',am_idx',kd_idx',kd2_idx',wv_idx',bi_idx',pe_idx',im_idx',fo_idx',...
+                xs_idx',xs_vchg',gz_idx',gz2_idx',am_idx',kd_idx',kd2_idx',wv_idx',bi_idx',pe_idx',im_idx',fo_idx',...
                 'VariableNames',{'patient','walk','stopwalk','gowalk','regionnum',...
                 'regionlabel','chan','npidx','nsamp','evnt','desc','descidx',...
-                'xsidx','xsvchg','gzidx','amidx','kdidx','kd2idx','wvidx','biidx','peidx','imidx','foidx'});
+                'xsidx','xsvchg','gzidx','gz2idx','amidx','kdidx','kd2idx','wvidx','biidx','peidx','imidx','foidx'});
 
             %filter by region (amygdala/anterior hipp)
             if all(regionidx<5)
@@ -2073,6 +2168,7 @@ classdef RWAnalysis2 < handle
                                 MT.npidx(k) = MT.npidx(k)+round(shift_gz*(obj.MultTrans.FS_np/obj.MultTrans.FS_gz));
                                 MT.xsidx(k) = MT.xsidx(k)+round(shift_gz*(obj.MultTrans.FS_xs/obj.MultTrans.FS_gz));
                                 MT.gzidx(k) = MT.gzidx(k)+round(shift_gz*(obj.MultTrans.FS_gz/obj.MultTrans.FS_gz));
+                                MT.gz2idx(k) = MT.gz2idx(k)+round(shift_gz*(obj.MultTrans.FS_gz2/obj.MultTrans.FS_gz));
                                 MT.amidx(k) = MT.amidx(k)+round(shift_gz*(obj.MultTrans.FS_am/obj.MultTrans.FS_gz));
                                 MT.kdidx(k) = MT.kdidx(k)+round(shift_gz*(obj.MultTrans.FS_kd/obj.MultTrans.FS_gz));
                                 MT.kd2idx(k) = MT.kd2idx(k)+round(shift_gz*(obj.MultTrans.FS_kd2/obj.MultTrans.FS_gz));
@@ -2122,6 +2218,10 @@ classdef RWAnalysis2 < handle
             tsec_gz = tsamp_gz./obj.MultTrans.FS_gz;
             ntime_gz = length(tsamp_gz);
 
+            tsamp_gz2 = round(transrng(1)*obj.MultTrans.FS_gz2):round(transrng(2)*obj.MultTrans.FS_gz2);
+            tsec_gz2 = tsamp_gz2./obj.MultTrans.FS_gz2;
+            ntime_gz2 = length(tsamp_gz2);
+
             tsamp_am = round(transrng(1)*obj.MultTrans.FS_am):round(transrng(2)*obj.MultTrans.FS_am);
             tsec_am = tsamp_am./obj.MultTrans.FS_am;
             ntime_am = length(tsamp_am);
@@ -2169,6 +2269,8 @@ classdef RWAnalysis2 < handle
             d_np = nan(size(uPtWkChIdx,1),ntime_np); %raw np data for running fooof, etc.
             d_xs = nan(size(uPtWkChIdx,1),ntime_xs);
             d_gz = nan(size(uPtWkChIdx,1),ntime_gz);
+            d_gz2_fix = nan(size(uPtWkChIdx,1),ntime_gz2);
+            d_gz2_sac = nan(size(uPtWkChIdx,1),ntime_gz2);
             d_am = nan(size(uPtWkChIdx,1),ntime_am);
             d_kd = nan(size(uPtWkChIdx,1),ntime_kd);
             d_kd2 = nan(size(uPtWkChIdx,1),ntime_kd2);
@@ -2190,6 +2292,7 @@ classdef RWAnalysis2 < handle
                 npidx = round(mt.npidx)+tsamp_np; 
                 xsidx = round(mt.xsidx)+tsamp_xs; 
                 gzidx = round(mt.gzidx)+tsamp_gz; 
+                gz2idx = round(mt.gz2idx)+tsamp_gz2; 
                 amidx = round(mt.amidx)+tsamp_am; 
                 kdidx = round(mt.kdidx)+tsamp_kd; 
                 kd2idx = round(mt.kd2idx)+tsamp_kd2; 
@@ -2224,6 +2327,18 @@ classdef RWAnalysis2 < handle
                     gzidx(ridx,:) = [];
                     d = reshape(d(gzidx,:),size(gzidx,1),size(gzidx,2));
                     d_gz(idx(~ridx),:) = d; %trial x time
+                end
+
+                %Gaze2
+                if ~isempty(obj.MultTable{pt}.d_gaze2_fix{wk})
+                    d = obj.MultTable{pt}.d_gaze2_fix{wk}; 
+                    ridx = any(gz2idx<1,2)|any(gz2idx>length(d),2)|any(isnan(mt.gz2idx),2); %remove index
+                    gz2idx(ridx,:) = [];
+                    d = reshape(d(gz2idx,:),size(gz2idx,1),size(gz2idx,2));
+                    d_gz2_fix(idx(~ridx),:) = d; %trial x time
+                    d = obj.MultTable{pt}.d_gaze2_sac{wk};
+                    d = reshape(d(gz2idx,:),size(gz2idx,1),size(gz2idx,2));
+                    d_gz2_sac(idx(~ridx),:) = d; %trial x time
                 end
 
                 %Amb
@@ -2314,6 +2429,8 @@ classdef RWAnalysis2 < handle
             d_np = permute(d_np,[2,1]);
             d_xs = permute(d_xs,[2,1]);
             d_gz = permute(d_gz,[2,1]);
+            d_gz2_fix = permute(d_gz2_fix,[2,1]);
+            d_gz2_sac = permute(d_gz2_sac,[2,1]);
             d_am = permute(d_am,[2,1]);
             d_kd = permute(d_kd,[2,1]);
             d_kd2 = permute(d_kd2,[2,1]);
@@ -2331,6 +2448,8 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.d_np = d_np;
             obj.MultTrans.MTd.d_xs = d_xs;
             obj.MultTrans.MTd.d_gz = d_gz;
+            obj.MultTrans.MTd.d_gz2_fix = d_gz2_fix;
+            obj.MultTrans.MTd.d_gz2_sac = d_gz2_sac;
             obj.MultTrans.MTd.d_am = d_am;
             obj.MultTrans.MTd.d_kd = d_kd;
             obj.MultTrans.MTd.d_kd2 = d_kd2;
@@ -2349,6 +2468,7 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.tsec_np = tsec_np;
             obj.MultTrans.MTd.tsec_xs = tsec_xs;
             obj.MultTrans.MTd.tsec_gz = tsec_gz;
+            obj.MultTrans.MTd.tsec_gz2 = tsec_gz2;
             obj.MultTrans.MTd.tsec_am = tsec_am;
             obj.MultTrans.MTd.tsec_kd = tsec_kd;
             obj.MultTrans.MTd.tsec_kd2 = tsec_kd2;
@@ -2366,6 +2486,7 @@ classdef RWAnalysis2 < handle
             obj.MultTrans.MTd.tsamp_np = tsamp_np;
             obj.MultTrans.MTd.tsamp_xs = tsamp_xs;
             obj.MultTrans.MTd.tsamp_gz = tsamp_gz;
+            obj.MultTrans.MTd.tsamp_gz2 = tsamp_gz2;
             obj.MultTrans.MTd.tsamp_am = tsamp_am;
             obj.MultTrans.MTd.tsamp_kd = tsamp_kd;
             obj.MultTrans.MTd.tsamp_kd2 = tsamp_kd2;
@@ -2393,6 +2514,8 @@ classdef RWAnalysis2 < handle
             DS_np = []; %2 sec segments marked as inside/outside
             DS_xs = []; %velocity data for xsens in 2sec segments to match DS_np
             DS_gz = [];
+            DS_gz2_fix = []; %alireza fixations
+            DS_gz2_sac = [];
             DS_am = [];
             DS_kd = [];
             DS_kd2 = [];
@@ -2425,6 +2548,12 @@ classdef RWAnalysis2 < handle
                 d_gz = obj.DTable.d_gaze_fix{m};
                 ntp_gz = obj.DTable.ntp_gaze{m}; %ntp in sec
                 fs_gz = obj.DTable.fs_gaze(m);
+
+                %Gaze2
+                d_gz2_fix = obj.DTable.d_gaze2_fix{m};
+                d_gz2_sac = obj.DTable.d_gaze2_sac{m};
+                ntp_gz2 = obj.DTable.ntp_gaze2{m}; %ntp in sec
+                fs_gz2 = obj.DTable.fs_gaze2(m);
 
                 %Ambient
                 d_am = obj.DTable.d_amb{m};
@@ -2503,6 +2632,7 @@ classdef RWAnalysis2 < handle
                 win_seg_np = win_seg_sec*fs_np;
                 win_seg_xs = win_seg_sec*fs_xs;
                 win_seg_gz = win_seg_sec*fs_gz;
+                win_seg_gz2 = win_seg_sec*fs_gz2;
                 win_seg_am = win_seg_sec*fs_am;
                 win_seg_kd = win_seg_sec*fs_kd;
                 win_seg_kd2 = win_seg_sec*fs_kd2;
@@ -2524,6 +2654,12 @@ classdef RWAnalysis2 < handle
                     if ~isempty(d_gz)
                         if (T.Start_NTP(k)-ntp_gz(1))<0
                             error('Gaze start is after start of walk! This is a problem and needs to be checked.');
+                        end
+                    end
+
+                    if ~isempty(d_gz2_fix)
+                        if (T.Start_NTP(k)-ntp_gz2(1))<0
+                            error('Gaze2 start is after start of walk! This is a problem and needs to be checked.');
                         end
                     end
 
@@ -2637,6 +2773,37 @@ classdef RWAnalysis2 < handle
                         end
                     end
                     DS_gz = cat(2,DS_gz,d_gz_seg);
+
+                    %gaze2 data (make the same size as d_np_seg)
+                    d_gz2_fix_seg = nan(win_seg_gz2,size(d_np_seg,2));
+                    d_gz2_sac_seg = nan(win_seg_gz2,size(d_np_seg,2));
+                    if ~isempty(d_gz2_fix)
+                        [~,start_idx] = min(abs(ntp_gz2 - T.Start_NTP(k))); %start samples for gaze
+                        [~,end_idx] = min(abs(ntp_gz2 - T.End_NTP(k)));
+
+                        dd_gz2_fix = d_gz2_fix(start_idx:end_idx);
+                        dd_gz2_fix(floor(size(dd_gz2_fix,1)/win_seg_gz2)*win_seg_gz2+1:end,:) = []; %200Hz (4*200=800 -> 4sec)
+                        dd_gz2_fix = reshape(dd_gz2_fix,win_seg_gz2,[]);
+
+                        dd_gz2_sac = d_gz2_sac(start_idx:end_idx);
+                        dd_gz2_sac(floor(size(dd_gz2_sac,1)/win_seg_gz2)*win_seg_gz2+1:end,:) = []; %200Hz (4*200=800 -> 4sec)
+                        dd_gz2_sac = reshape(dd_gz2_sac,win_seg_gz2,[]);
+
+                        if size(dd_gz2_fix,2)>size(d_np_seg,2)
+                            d_gz2_fix_seg = dd_gz2_fix(:,1:size(d_np_seg,2));
+                            d_gz2_sac_seg = dd_gz2_sac(:,1:size(d_np_seg,2));
+                            fprintf('Gaze2 data for walk %0.0f (in/out segment %0.0f) is longer than NP. Truncating to fit NP.\n',walknum,k);
+                        elseif size(dd_gz2_fix,2)<size(d_np_seg,2)
+                            d_gz2_fix_seg(:,1:size(dd_gz2_fix,2)) = dd_gz2_fix;
+                            d_gz2_sac_seg(:,1:size(dd_gz2_sac,2)) = dd_gz2_sac;
+                            fprintf('Gaze2 data for walk %0.0f (in/out segment %0.0f) is shorter than NP. Missing time is filled with NaNs.\n',walknum,k);
+                        else
+                            d_gz2_fix_seg = dd_gz2_fix;
+                            d_gz2_sac_seg = dd_gz2_sac;
+                        end
+                    end
+                    DS_gz2_fix = cat(2,DS_gz2_fix,d_gz2_fix_seg);
+                    DS_gz2_sac = cat(2,DS_gz2_sac,d_gz2_sac_seg);
 
                     %ambient light data (make the same size as d_np_seg)
                     d_am_seg = nan(win_seg_am,size(d_np_seg,2));
@@ -2795,6 +2962,8 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Seg.DS_np = DS_np;
             obj.DParsed.Seg.DS_xs = DS_xs;
             obj.DParsed.Seg.DS_gz = DS_gz;
+            obj.DParsed.Seg.DS_gz2_fix = DS_gz2_fix;
+            obj.DParsed.Seg.DS_gz2_sac = DS_gz2_sac;
             obj.DParsed.Seg.DS_am = DS_am;
             obj.DParsed.Seg.DS_kd = DS_kd;
             obj.DParsed.Seg.DS_kd2 = DS_kd2;
@@ -2803,9 +2972,11 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Seg.DS_pe = DS_pe;
             obj.DParsed.Seg.DS_im = DS_im;
             obj.DParsed.Seg.DS_ev = DS_ev; %event probability
+
             obj.DParsed.Seg.FS_np = fs_np;
             obj.DParsed.Seg.FS_xs = fs_xs;
             obj.DParsed.Seg.FS_gz = fs_gz;
+            obj.DParsed.Seg.FS_gz2 = fs_gz2;
             obj.DParsed.Seg.FS_am = fs_am;
             obj.DParsed.Seg.FS_kd = fs_kd;
             obj.DParsed.Seg.FS_kd2 = fs_kd2;
@@ -2813,11 +2984,13 @@ classdef RWAnalysis2 < handle
             obj.DParsed.Seg.FS_bi = fs_bi;
             obj.DParsed.Seg.FS_pe = fs_pe;
             obj.DParsed.Seg.FS_im = fs_im;
+
             obj.DParsed.Seg.F_wv = f_wv; %freq vector for wavelet
             obj.DParsed.Seg.F_bi = f_bi; %field names for biopac
             obj.DParsed.Seg.F_pe = f_pe; %freq bands for pepisode
             obj.DParsed.Seg.F_im = f_im; %field names for imu
             obj.DParsed.Seg.F_ev = obj.UniqueEvents; %field names for unique events
+
             obj.DParsed.Seg.InFlag = InFlag;
             obj.DParsed.Seg.WalkNumSeg = WalkNumSeg;
             obj.DParsed.Seg.Outliers = any(any(isnan(DS_np),1),3); %<-500 outliers handled in loadData (set to nan)
@@ -3438,6 +3611,9 @@ classdef RWAnalysis2 < handle
             end
             npwr = (npwr-pwr_z(1,:,:))./pwr_z(2,:,:); %zscore by freq band
             npwr_trials = npwr; %normalized power for individual trials
+            % npwr_se = 1.96*std(npwr,0,3,'omitnan')./sqrt(size(npwr,3)); %95ci
+            disp('Running bootstrap for canonical bands...')
+            npwr_se = calcRWABootstrap_mex(npwr,0);
             npwr = squeeze(mean(npwr,3,"omitnan")); %normalized trial avg power in dB (take trial avg in log space)
 
             %Permutations
@@ -3508,6 +3684,7 @@ classdef RWAnalysis2 < handle
                     end
                 case 'zscore'
                     npwr = (npwr-mPM)./sPM;
+                    npwr_se = (npwr_se-mPM)./sPM;
                     npwr_thresh = npwr;
                     npwr_trials = (npwr_trials-mPM)./sPM;
                     switch correctiontype
@@ -3566,46 +3743,62 @@ classdef RWAnalysis2 < handle
             predytick = -(0:size(obj.PredList,2)-1)*obj.PredYscale;
             [B,A] = butter(3,1/(obj.MultTrans.FS_xs/2),'low'); %filter for acceleration
             for k=1:size(obj.PredList,2) %xs,gz,kd,am,ed,pe1,pe2,pe3,gy,ex
-                if contains(obj.PredList{1,k},'ac')
-                    dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,1}]); 
-                    nanidx = any(isnan(dx));
-                    dx(:,nanidx) = 0;
-                    dx = filtfilt(B,A,dx);
-                    dx(:,nanidx) = nan;
-                    dx = diff(dx).*obj.MultTrans.FS_xs; dx(end+1,:) = dx(end,:);
-                    tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,1}]);
+                if any(contains(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
+                    fband = obj.FreqBands(contains(obj.FreqBandLabels,obj.PredList{2,k}),:);
+                    fidx = freq>=fband(1) & freq<fband(2);
+                    tx = tsec;
+                    dxx_me = mean(npwr(:,fidx),2,'omitnan');
+                    dxx_zs = zscore(dxx_me);
+                    dxx_se = squeeze(mean(npwr_se(:,fidx,:),2,'omitnan')); %95ci
+                    pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
+                    pH(k,2) = plot(aH,tx,dxx_se(:,1),':k','LineWidth',0.5);
+                    pH(k,3) = plot(aH,tx,dxx_se(:,2),':k','LineWidth',0.5);
+                    pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 else
-                    dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,k}]);
-                    tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,k}]);
-                end
-                %these predictors have outliers that need to be removed
-                %(binary data like gz/pe don't need outliers removed)
-                if contains(obj.PredList{1,k},["xs","am","ed","ac"]) 
-                    dxx = dx(:,~isoutlier(mean(dx)));
-                else
-                    dxx = dx;
-                end
-                if contains(obj.PredList{1,k},["ex","tg","of"]) 
-                    dxx = dxx./mean(dxx,1,'omitnan'); %normalize fooof exponent/offset or theta/gamma
-                end
-                if p.predabs
-                    if contains(obj.PredList{1,k},'gy')
-                        dxx = abs(dxx); %make head turn all pos for now
+                    if contains(obj.PredList{1,k},'ac')
+                        dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,1}]);
+                        nanidx = any(isnan(dx));
+                        dx(:,nanidx) = 0;
+                        dx = filtfilt(B,A,dx);
+                        dx(:,nanidx) = nan;
+                        dx = diff(dx).*obj.MultTrans.FS_xs; dx(end+1,:) = dx(end,:);
+                        tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,1}]);
+                    else
+                        dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,k}]);
+                        tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,k}]);
                     end
+                    %these predictors have outliers that need to be removed
+                    %(binary data like gz/pe don't need outliers removed)
+                    if contains(obj.PredList{1,k},["xs","am","ed","ac"])
+                        dxx = dx(:,~isoutlier(mean(dx)));
+                    else
+                        dxx = dx;
+                    end
+                    if contains(obj.PredList{1,k},["ex","tg","of"])
+                        dxx = dxx./mean(dxx,1,'omitnan'); %normalize fooof exponent/offset or theta/gamma
+                    end
+                    if p.predabs
+                        if contains(obj.PredList{1,k},'gy')
+                            dxx = abs(dxx); %make head turn all pos for now
+                        end
+                    end
+                    dxx_me = mean(dxx,2,"omitnan");
+                    dxx_zs = zscore(dxx_me);
+                    dxx_se = 1.96*std(dxx,0,2,'omitnan')./sqrt(size(dxx,2)); %95ci
+                    pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
+                    pH(k,2) = plot(aH,tx,dxx_me-dxx_se,':k','LineWidth',0.5);
+                    pH(k,3) = plot(aH,tx,dxx_me+dxx_se,':k','LineWidth',0.5);
+                    pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 end
-                dxx_me = mean(dxx,2,"omitnan");
-                dxx_zs = zscore(dxx_me);
-                dxx_se = 1.96*std(dxx,0,2,'omitnan')./sqrt(size(dxx,2)); %95ci
-                pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
-                pH(k,2) = plot(aH,tx,dxx_me-dxx_se,':k','LineWidth',0.5);
-                pH(k,3) = plot(aH,tx,dxx_me+dxx_se,':k','LineWidth',0.5);
-                pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
             end  
             fH.UserData.pH = pH;
             set(pH,'visible','off');
+            %%%%%%%%%%%%%%% Fix Error
             if contains(p.predtype,'All')
                 if isempty(p.predidxs)
                     predidxs = 1:size(obj.PredList,2);
+                else
+                    predidxs = p.predidxs;
                 end
                 pytick = predytick(1:length(predidxs));
                 plist = obj.PredList(2,predidxs);
@@ -3639,9 +3832,11 @@ classdef RWAnalysis2 < handle
             if plottrials
                 plot(aH,[tsec(1),tsec(end)],repmat(trialsfreqrng,2,1),':k')
             end
-            if plotpowercomp || plotfooofcomp
+            if plotpowercomp || plotfooofcomp || p.plotbox1bar
                 rectangle(aH,'Position',[boxcomprng(1,1),boxcomprng(1,3),diff(boxcomprng(1,1:2)),diff(boxcomprng(1,3:4))],'LineStyle','-.');
-                rectangle(aH,'Position',[boxcomprng(2,1),boxcomprng(2,3),diff(boxcomprng(2,1:2)),diff(boxcomprng(2,3:4))],'LineStyle','--');
+                if plotpowercomp || plotfooofcomp
+                        rectangle(aH,'Position',[boxcomprng(2,1),boxcomprng(2,3),diff(boxcomprng(2,1:2)),diff(boxcomprng(2,3:4))],'LineStyle','--');
+                end
             end
             cb = colorbar(aH);
             cblims = [cb.Limits(1),0,cb.Limits(2)];
@@ -3740,37 +3935,22 @@ classdef RWAnalysis2 < handle
                 fidx_box1 = freq>boxcomprng(1,3) & freq<boxcomprng(1,4);
                 fidx_box2 = freq>boxcomprng(2,3) & freq<boxcomprng(2,4);
                 
-                % pwr_box1 = squeeze(mean(mean(10*log10(pwr(tidx_box1,fidx_box1,:)),1),2));
-                % pwr_box2 = squeeze(mean(mean(10*log10(pwr(tidx_box2,fidx_box2,:)),1),2));
+                pwr_box1 = squeeze(mean(mean(10*log10(pwr(tidx_box1,fidx_box1,:)),1),2));
+                pwr_box2 = squeeze(mean(mean(10*log10(pwr(tidx_box2,fidx_box2,:)),1),2));
 
-                pwr_box1 = squeeze(mean(mean(pwr(tidx_box1,fidx_box1,:),1),2)); %average before converting to dB
-                pwr_box2 = squeeze(mean(mean(pwr(tidx_box2,fidx_box2,:),1),2));
+                [nullDist, pval, stat, info] = permutation.TwoSample(pwr_box1, pwr_box2, obj.MultTrans.MT.patient, patientChannel=obj.MultTrans.MT.chan, nPerm=2000);
 
-                % tidx_xs_box1 = tsec_xs>boxcomprng(1,1) & tsec_xs<boxcomprng(1,2);
-                % tidx_xs_box2 = tsec_xs>boxcomprng(2,1) & tsec_xs<boxcomprng(2,2);
-
-                % dxx = dx;
-                % dxx(:,isoutlier(mean(dx))) = nan;
-                % dx_box1 = mean(dxx(tidx_xs_box1,:))';
-                % dx_box2 = mean(dxx(tidx_xs_box2,:))';
+                % pwr_box1 = squeeze(mean(mean(pwr(tidx_box1,fidx_box1,:),1),2)); %average before converting to dB
+                % pwr_box2 = squeeze(mean(mean(pwr(tidx_box2,fidx_box2,:),1),2));
 
                 mpwr_box1 = nan(size(uPtCh,1),1);
                 mpwr_box2 = nan(size(uPtCh,1),1);
-                % ccdx_box1 = nan(size(uPtCh,1),1);
-                % ccdx_box2 = nan(size(uPtCh,1),1);
                 for k=1:size(uPtCh,1)
                     idx = (uPtChIdx==k);
                     pwr_b1 = pwr_box1(idx);
                     pwr_b2 = pwr_box2(idx);
-                    % dx_b1 = dx_box1(idx);
-                    % dx_b2 = dx_box2(idx);
                     mpwr_box1(k) = mean(pwr_b1);
                     mpwr_box2(k) = mean(pwr_b2);
-                    % nan_idx = isnan(dx_b1)|isnan(dx_b2);
-                    % cc_b1 = corrcoef(dx_b1(~nan_idx),10*log10(pwr_b1(~nan_idx))); %convert pwr to dB before correlation
-                    % cc_b2 = corrcoef(dx_b2(~nan_idx),10*log10(pwr_b2(~nan_idx)));
-                    % ccdx_box1(k) = cc_b1(1,2);
-                    % ccdx_box2(k) = cc_b2(1,2);
                 end
 
                 mpwr_box12 = median([pwr_box1,pwr_box2]);
@@ -3779,26 +3959,20 @@ classdef RWAnalysis2 < handle
                 mmpwr_box12 = median([mpwr_box1,mpwr_box2]);
                 mpwr_chg_box12 = (mmpwr_box12(2)-mmpwr_box12(1))/mmpwr_box12(1); %percentage change in normalized power
 
-                fH3 = figure('Position',[50,50,1200,550]); 
-                aH3 = [];
-                aH3(1) = subplot(1,2,1,'parent',fH3);
-                boxplot(aH3(1),10*log10([pwr_box1,pwr_box2]),{'box1 (-.)','box2 (--)'})
-                [h,p,ci,stats] = ttest2(10*log10(pwr_box1),10*log10(pwr_box2));
-                ylabel(aH3(1),'Power (dB)')
-                title(aH3(1),sprintf('All Trials (p=%0.1e, %0.0f%%)',p,pwr_chg_box12*100))
-                aH3(2) = subplot(1,2,2,'parent',fH3);
-                boxplot(aH3(2),10*log10([mpwr_box1,mpwr_box2]),{'box1 (-.)','box2 (--)'})
-                hold(aH3(2),'on');
+                fH3 = figure('Position',[50,50,800,550]); 
+                aH3 = axes('Parent',fH3);
+                boxplot(aH3,([mpwr_box1,mpwr_box2]),{'box1 (-.)','box2 (--)'})
+                hold(aH3,'on');
                 for k=1:length(mpwr_box1)
                     x1 = (rand-0.5)/3+1;
                     x2 = (rand-0.5)/3+2;
-                    plot(aH3(2),x1,10*log10(mpwr_box1(k)),'Marker',mrk_style{rgnum(k)},'MarkerFaceColor',mrk_color{ptnum(k)},'MarkerEdgeColor',mrk_color{ptnum(k)},'MarkerSize',mrk_size(rgnum(k)),'LineWidth',2);
-                    plot(aH3(2),x2,10*log10(mpwr_box2(k)),'Marker',mrk_style{rgnum(k)},'MarkerFaceColor',mrk_color{ptnum(k)},'MarkerEdgeColor',mrk_color{ptnum(k)},'MarkerSize',mrk_size(rgnum(k)),'LineWidth',2);                    
-                    plot(aH3(2),[x1,x2],10*log10([mpwr_box1(k),mpwr_box2(k)]),'LineStyle',':','Color',mrk_color{ptnum(k)})
+                    plot(aH3,x1,(mpwr_box1(k)),'Marker',mrk_style{rgnum(k)},'MarkerFaceColor',mrk_color{ptnum(k)},'MarkerEdgeColor',mrk_color{ptnum(k)},'MarkerSize',mrk_size(rgnum(k)),'LineWidth',2);
+                    plot(aH3,x2,(mpwr_box2(k)),'Marker',mrk_style{rgnum(k)},'MarkerFaceColor',mrk_color{ptnum(k)},'MarkerEdgeColor',mrk_color{ptnum(k)},'MarkerSize',mrk_size(rgnum(k)),'LineWidth',2);                    
+                    plot(aH3,[x1,x2],([mpwr_box1(k),mpwr_box2(k)]),'LineStyle',':','Color',mrk_color{ptnum(k)})
                 end
-                [h,p,ci,stats] = ttest2(10*log10(mpwr_box1),10*log10(mpwr_box2));
-                ylabel(aH3(2),'Mean Power (dB)')
-                title(aH3(2),sprintf('Mean Across Patient/Region (p=%0.1e, %0.0f%%)\nPatient (r=1, g=2, b=3, c=4, m=5)\nRegion (o=anthip, +=lattemp, *=entperi, x=posthip)',p,mpwr_chg_box12*100))
+                % [h,pval,ci,stats] = ttest2((mpwr_box1),(mpwr_box2));
+                ylabel(aH3,'Mean Power (dB)')
+                title(aH3,sprintf('Mean Across Patient/Region (p=%0.1e, %0.0f%%)\nPatient (r=1, g=2, b=3, c=4, m=5)\nRegion (o=anthip, +=lattemp, *=entperi, x=posthip)',pval,mpwr_chg_box12*100))
                 set(aH3,'FontName','Arial','FontSize',18,'TitleFontSizeMultiplier',0.6);
             end %power comparison
 
@@ -3968,6 +4142,53 @@ classdef RWAnalysis2 < handle
                 xlim(aH5,[-1,1]);
             end
 
+            fH6 = [];
+            if p.plotbox1bar
+                tidx_box1 = tsec>boxcomprng(1,1) & tsec<boxcomprng(1,2);
+                fidx_box1 = freq>boxcomprng(1,3) & freq<boxcomprng(1,4);
+
+                pwr_box1 = squeeze(mean(mean(10*log10(pwr(tidx_box1,fidx_box1,:)),1),2)); %average before converting to dB
+                [nullDist, pval, stat, info] = permutation.OneSampleVsZero(pwr_box1, obj.MultTrans.MT.patient, patientChannel=obj.MultTrans.MT.chan, nPerm=2000);
+
+                [uPtCh,~,uPtChIdx] = unique(obj.MultTrans.MT(:,{'patient','chan','regionnum'})); %remake this based on channel not region
+                [uPtRg,~,uPtRgIdx] = unique(uPtCh(:,{'patient','regionnum'}));
+
+                mpwr_box1 = nan(size(uPtCh,1),1);
+                for k=1:size(uPtCh,1)
+                    idx = (uPtChIdx==k);
+                    pwr_b1 = pwr_box1(idx);
+                    mpwr_box1(k) = mean(pwr_b1);
+                end
+
+                fH6 = figure('Position',[50,50,800,550]);
+                aH = axes('parent',fH6);
+                mpwr = mean(pwr_box1);
+                spwr = std(pwr_box1)/sqrt(length(pwr_box1));
+                bar(aH,mpwr,'FaceColor', [0.5 0.5 0.5])
+                hold(aH,'on');
+                errorbar(aH, mpwr, spwr, 'k', 'LineWidth', 1.5, 'CapSize', 12);
+                set(aH, 'XTick', 1, 'XTickLabel', {'box1 (-.)'})
+                Sc = [];
+                Pt = [];
+                Rg = [];
+                for k=1:length(mpwr_box1)
+                    x1 = (rand-0.5)/2+1;
+                    sc = scatter(aH,x1,mpwr_box1(k),'Marker',mrk_style{uPtCh.regionnum(k)},'MarkerFaceColor',mrk_color{uPtCh.patient(k)},'MarkerFaceAlpha',0.5,'MarkerEdgeColor',mrk_color{uPtCh.patient(k)},'SizeData',150,'LineWidth',1);
+                    Sc(uPtRgIdx(k)) = sc;
+                    Pt(uPtRgIdx(k)) = uPtCh.patient(k);
+                    Rg(uPtRgIdx(k)) = uPtCh.regionnum(k);
+                end
+                ylabel(aH,'Mean Power (dB)')
+                title(aH,sprintf('Mean Across Patient/Region (p=%0.1e)\nPatient (r=1, g=2, b=3, c=4, m=5)\nRegion (o=anthip, +=lattemp, *=entperi, x=posthip)',pval))
+                set(aH,'FontName','Arial','FontSize',18,'TitleFontSizeMultiplier',0.6);
+                % RgName = {'anthip','lattemp','entperi','posthip'};
+                % legendLabels = cellfun(@(x,y)['P',num2str(x),' (',RgName{y},')'],num2cell(Pt),num2cell(Rg),'UniformOutput',false);
+                % if length(legendLabels)==length(Sc)
+                %     legend(Sc,legendLabels)
+                % end
+            end
+
+
             if nargout
                 varargout{1} = fH;
             end
@@ -3982,6 +4203,14 @@ classdef RWAnalysis2 < handle
 
             if nargout>3
                 varargout{4} = fH4;
+            end
+
+            if nargout>4
+                varargout{5} = fH5;
+            end
+
+            if nargout>5
+                varargout{6} = fH6;
             end
 
             % rootdir = 'C:\Users\Administrator\Dropbox\Work\Code\Analysis\Inman\RealWorld\figs\Combined\InOut_Transition_Specgram\StopGo';
@@ -4071,12 +4300,14 @@ classdef RWAnalysis2 < handle
             %Real (Do unequal trials violate ttest assumptions? Not for Welch's ttest below.)
             tnum = squeeze(mean(pwr(:,:,trialtype==-1),3,"omitnan")-mean(pwr(:,:,trialtype==1),3,"omitnan")); %trial avg diff (time x freq)
             tdenom = sqrt(std(pwr(:,:,trialtype==-1),0,3,"omitnan").^2./ntrials1+std(pwr(:,:,trialtype==1),0,3,"omitnan").^2./ntrials2);
-            npwr = tnum./tdenom;
+            disp('Running bootstrap for canonical bands...')
+            npwr_se = calcRWABootstrap_mex(pwr,trialtype); %time x freq x 2
+            npwr = tnum./tdenom; %time x freq
 
             %Permutations
             disp('Running permutations...')
             % PM = calcRWAPerm(pwr,nan(1,nfreq),trialtype);
-            PM = calcRWAPerm_mex(pwr,nan(1,nfreq),trialtype); %2.5 times faster
+            PM = calcRWAPerm_mex(pwr,nan(1,nfreq),trialtype,nan(2,1)); %2.5 times faster
 
             %Finding percentiles of permuted distributions
             pm_freq = reshape(permute(PM,[1,3,2]),[],nfreq); %(ntime*nperm) x nfreq
@@ -4137,6 +4368,7 @@ classdef RWAnalysis2 < handle
                     end
                 case 'zscore'
                     npwr = (npwr-mPM)./sPM;
+                    npwr_se = (npwr_se-mPM)./sPM;
                     npwr_thresh = npwr;
                     switch correctiontype
                         case {'fdr','fdr+cluster'}
@@ -4178,49 +4410,64 @@ classdef RWAnalysis2 < handle
             predytick = -(0:size(obj.PredList,2)-1)*obj.PredYscale;
             [B,A] = butter(3,1/(obj.MultTrans.FS_xs/2),'low'); %filter for acceleration
             for k=1:size(obj.PredList,2) %xs,gz,kd,am,ed
-                if contains(obj.PredList{1,k},'ac') %acceleration
-                    dx1 = MTd1.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx1)); dx1(:,nanidx) = 0; dx1 = filtfilt(B,A,dx1); dx1(:,nanidx) = nan;
-                    dx1 = diff(dx1).*obj.MultTrans.FS_xs; dx1(end+1,:) = dx1(end,:);
-                    dx2 = MTd2.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx2)); dx2(:,nanidx) = 0; dx2 = filtfilt(B,A,dx2); dx2(:,nanidx) = nan;
-                    dx2 = diff(dx2).*obj.MultTrans.FS_xs; dx2(end+1,:) = dx2(end,:);                   
-                    tx = MTd1.(['tsec_',obj.PredList{1,1}]);
+                if any(contains(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
+                    fband = obj.FreqBands(contains(obj.FreqBandLabels,obj.PredList{2,k}),:);
+                    fidx = freq>=fband(1) & freq<fband(2);
+                    tx = tsec;
+                    dxx_me = mean(npwr(:,fidx),2,'omitnan');
+                    dxx_zs = zscore(dxx_me);
+                    dxx_se = squeeze(mean(npwr_se(:,fidx,:),2,'omitnan')); %95ci
+                    pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
+                    pH(k,2) = plot(aH,tx,dxx_se(:,1),':k','LineWidth',0.5);
+                    pH(k,3) = plot(aH,tx,dxx_se(:,2),':k','LineWidth',0.5);
+                    pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 else
-                    dx1 = MTd1.(['d_',obj.PredList{1,k}]);
-                    dx2 = MTd2.(['d_',obj.PredList{1,k}]);
-                    tx = MTd1.(['tsec_',obj.PredList{1,k}]);
-                end
-                %these predictors have outliers that need to be removed
-                %(binary data like gz/pe don't need outliers removed)
-                if contains(obj.PredList{1,k},["xs","am","ed","ac"]) 
-                    dxx1 = dx1(:,~isoutlier(mean(dx1)));
-                    dxx2 = dx2(:,~isoutlier(mean(dx2)));
-                else
-                    dxx1 = dx1;
-                    dxx2 = dx2;
-                end
-                if contains(obj.PredList{1,k},["ex","tg","of"]) 
-                    dxx1 = dxx1./mean(dxx1,1,'omitnan'); %normalize fooof exponent
-                    dxx2 = dxx2./mean(dxx2,1,'omitnan');
-                end
-                if p.predabs
-                    if contains(obj.PredList{1,k},'gy')
-                        dxx1 = abs(dxx1); %make head turn all pos for now
-                        dxx2 = abs(dxx2);
+                    if contains(obj.PredList{1,k},'ac') %acceleration
+                        dx1 = MTd1.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx1)); dx1(:,nanidx) = 0; dx1 = filtfilt(B,A,dx1); dx1(:,nanidx) = nan;
+                        dx1 = diff(dx1).*obj.MultTrans.FS_xs; dx1(end+1,:) = dx1(end,:);
+                        dx2 = MTd2.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx2)); dx2(:,nanidx) = 0; dx2 = filtfilt(B,A,dx2); dx2(:,nanidx) = nan;
+                        dx2 = diff(dx2).*obj.MultTrans.FS_xs; dx2(end+1,:) = dx2(end,:);
+                        tx = MTd1.(['tsec_',obj.PredList{1,1}]);
+                    else
+                        dx1 = MTd1.(['d_',obj.PredList{1,k}]);
+                        dx2 = MTd2.(['d_',obj.PredList{1,k}]);
+                        tx = MTd1.(['tsec_',obj.PredList{1,k}]);
                     end
+                    %these predictors have outliers that need to be removed
+                    %(binary data like gz/pe don't need outliers removed)
+                    if contains(obj.PredList{1,k},["xs","am","ed","ac"])
+                        dxx1 = dx1(:,~isoutlier(mean(dx1)));
+                        dxx2 = dx2(:,~isoutlier(mean(dx2)));
+                    else
+                        dxx1 = dx1;
+                        dxx2 = dx2;
+                    end
+                    if contains(obj.PredList{1,k},["ex","tg","of"])
+                        dxx1 = dxx1./mean(dxx1,1,'omitnan'); %normalize fooof exponent
+                        dxx2 = dxx2./mean(dxx2,1,'omitnan');
+                    end
+                    if p.predabs
+                        if contains(obj.PredList{1,k},'gy')
+                            dxx1 = abs(dxx1); %make head turn all pos for now
+                            dxx2 = abs(dxx2);
+                        end
+                    end
+                    dxx_me = mean(dxx1,2,"omitnan")-mean(dxx2,2,"omitnan");
+                    dxx_zs = zscore(dxx_me);
+                    dxx_se = nan(size(dxx_me));
+                    pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
+                    pH(k,2) = plot(aH,tx,dxx_me-dxx_se,':k','LineWidth',0.5);
+                    pH(k,3) = plot(aH,tx,dxx_me+dxx_se,':k','LineWidth',0.5);
+                    pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 end
-                dxx_me = mean(dxx1,2,"omitnan")-mean(dxx2,2,"omitnan");
-                dxx_zs = zscore(dxx_me);
-                dxx_se = nan(size(dxx_me));
-                pH(k,1) = plot(aH,tx,dxx_me,'-k','LineWidth',2);
-                pH(k,2) = plot(aH,tx,dxx_me-dxx_se,':k','LineWidth',0.5);
-                pH(k,3) = plot(aH,tx,dxx_me+dxx_se,':k','LineWidth',0.5);
-                pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
             end  
             fH.UserData.pH = pH;
             set(pH,'visible','off');
             if contains(p.predtype,'All')
                 if isempty(p.predidxs)
                     predidxs = 1:size(obj.PredList,2);
+                else
+                    predidxs = p.predidxs;
                 end
                 pytick = predytick(1:length(predidxs));
                 plist = obj.PredList(2,predidxs);
@@ -5803,6 +6050,8 @@ classdef RWAnalysis2 < handle
             %RWA.calcITPCEye(5,1:3,2); %response
             p = obj.parseInputs(varargin{:});
             p.downsampleitpc = true;
+            % p.alirezafix = true;
+            % p.fullwalknorm = false;
         
             warning('off','MATLAB:contour:ConstantData');
             
@@ -5812,7 +6061,7 @@ classdef RWAnalysis2 < handle
             veltype = p.veltype; %'', 'High Change', 'Low Change'
             patienttype = p.patienttype; %'All Patients', '2,4'
             desctype = p.desctype; %close, open, etc. (optional, will skip if empty)
-            transrng = p.transrng; %default [-10,10] %window to search fixations
+            transrng = p.transrng; %default [-3,3] %window to search fixations
             nprng = [-2,2]; %window for getting np data aligned to fixations
             npclip = [-1,1]; %window for removing edge artifact and plotting
             pval = p.pval; %default p=0.05
@@ -5834,21 +6083,49 @@ classdef RWAnalysis2 < handle
             FS_np = obj.MultTrans.FS_np;
             
             %Get data
-            tsamp_gz = round(transrng(1)*obj.MultTrans.FS_gz):round(transrng(2)*obj.MultTrans.FS_gz);
-            tsec_gz = tsamp_gz./obj.MultTrans.FS_gz;
-            ntime_gz = length(tsamp_gz);
+            if p.alirezafix
+                fs_gz = obj.MultTrans.FS_gz2;
+
+                tsamp_gz = round(transrng(1)*fs_gz):round(transrng(2)*fs_gz);
+                tsec_gz = tsamp_gz./fs_gz;
+                ntime_gz = length(tsamp_gz);
+
+                tsamp_gz_npwin = round(nprng(1)*fs_gz):round(nprng(2)*fs_gz);
+                tsec_gz_npwin = tsamp_gz_npwin./fs_gz;
+                ntime_gz_npwin = length(tsamp_gz_npwin);
+                tsamp_gz_npwin_center = find(tsamp_gz_npwin==0);
+            else
+                fs_gz = obj.MultTrans.FS_gz;
+
+                tsamp_gz = round(transrng(1)*fs_gz):round(transrng(2)*fs_gz);
+                tsec_gz = tsamp_gz./fs_gz;
+                ntime_gz = length(tsamp_gz);
+
+                tsamp_gz_npwin = round(nprng(1)*fs_gz):round(nprng(2)*fs_gz);
+                tsec_gz_npwin = tsamp_gz_npwin./fs_gz;
+                ntime_gz_npwin = length(tsamp_gz_npwin);
+                tsamp_gz_npwin_center = find(tsamp_gz_npwin==0);
+            end
+
             tsamp_np = round(nprng(1)*FS_np):round(nprng(2)*FS_np);
             tsec_np = tsamp_np/FS_np;
             ntime_np = length(tsamp_np);
 
-            tsamp_gz_npwin = round(nprng(1)*obj.MultTrans.FS_gz):round(nprng(2)*obj.MultTrans.FS_gz);
-            tsec_gz_npwin = tsamp_gz_npwin./obj.MultTrans.FS_gz;
-            ntime_gz_npwin = length(tsamp_gz_npwin);
+            tsamp_ht_npwin = round(nprng(1)*obj.MultTrans.FS_im):round(nprng(2)*obj.MultTrans.FS_im); %head turn
+            tsec_ht_npwin = tsamp_ht_npwin./obj.MultTrans.FS_im;
+            ntime_ht_npwin = length(tsamp_ht_npwin);
+
+            tsamp_wv_npwin = round(nprng(1)*obj.MultTrans.FS_wv):round(nprng(2)*obj.MultTrans.FS_wv); %wavelet
+            tsec_wv_npwin = tsamp_wv_npwin./obj.MultTrans.FS_wv;
+            ntime_wv_npwin = length(tsamp_wv_npwin);
 
             [uPtWkCh,~,uPtWkChIdx] = unique(obj.MultTrans.MT(:,{'patient','walk','chan'}));
 
             D = cell(1,size(uPtWkCh,1));
             GZ = cell(1,size(uPtWkCh,1));
+            HT = cell(1,size(uPtWkCh,1));
+            WV = cell(1,size(uPtWkCh,1));
+            FSDur = cell(1,size(uPtWkCh,1)); %fix/sac durations in sec
             Stats = []; %mean fixation, mean saccade durations in sec
             for k=1:size(uPtWkCh,1)
                 % clc; disp(k/size(uPtWkCh,1));
@@ -5859,13 +6136,24 @@ classdef RWAnalysis2 < handle
                 wk = uPtWkCh.walk(k);
                 ch = uPtWkCh.chan(k);
 
-                gzidx = round(mt.gzidx)+tsamp_gz;
-                if ~isempty(obj.MultTable{pt}.d_gaze_fix{wk})
-                    d_gz = obj.MultTable{pt}.d_gaze_fix{wk}; 
-                    ntp_gz = obj.MultTable{pt}.ntp_gaze{wk}; 
-
+                if p.alirezafix
+                    gznan = any(isnan(mt.gz2idx),2);
+                    gzidx = round(mt.gz2idx)+tsamp_gz;
+                    if p.saccadeflag
+                        d_gz = obj.MultTable{pt}.d_gaze2_sac{wk};
+                    else
+                        d_gz = obj.MultTable{pt}.d_gaze2_fix{wk};
+                    end
+                    ntp_gz = obj.MultTable{pt}.ntp_gaze2{wk};
+                else
+                    gznan = any(isnan(mt.gzidx),2);
+                    gzidx = round(mt.gzidx)+tsamp_gz;
+                    d_gz = obj.MultTable{pt}.d_gaze_fix{wk};
+                    ntp_gz = obj.MultTable{pt}.ntp_gaze{wk};
+                end
+                if ~isempty(d_gz)
                     if ~isempty(transtype)
-                        ridx = any(gzidx<1,2)|any(gzidx>length(d_gz),2)|any(isnan(mt.gzidx),2); %remove index
+                        ridx = any(gzidx<1,2)|any(gzidx>length(d_gz),2)|gznan; %remove index
                         gzidx(ridx,:) = [];
                         d_gz = reshape(d_gz(gzidx,:),size(gzidx,1),size(gzidx,2))';
                         ntp_gz = reshape(ntp_gz(gzidx,:),size(gzidx,1),size(gzidx,2))';
@@ -5901,8 +6189,8 @@ classdef RWAnalysis2 < handle
                                 sac_stop = sac_stop(1:length(sac_start));
                             end
 
-                            fix_mean = mean(fix_stop-fix_start,1)./obj.MultTrans.FS_gz;
-                            sac_mean = mean(sac_stop-sac_start,1)./obj.MultTrans.FS_gz;
+                            fix_mean = mean(fix_stop-fix_start,1)./fs_gz;
+                            sac_mean = mean(sac_stop-sac_start,1)./fs_gz;
 
                             if isempty(fix_mean); fix_mean = nan; end
                             if isempty(sac_mean); sac_mean = nan; end
@@ -5912,10 +6200,14 @@ classdef RWAnalysis2 < handle
                     end
                     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-                    if p.saccadeflag
-                        ntp_gz = ntp_gz(diff(d_gz)==-1);
+                    if p.alirezafix
+                        ntp_gz = ntp_gz(diff(d_gz)==1); %alireza uses two different data streams for fixation/saccades always positive-going
                     else
-                        ntp_gz = ntp_gz(diff(d_gz)==1); %fixation ntp times (this is time x #events)
+                        if p.saccadeflag
+                            ntp_gz = ntp_gz(diff(d_gz)==-1);
+                        else
+                            ntp_gz = ntp_gz(diff(d_gz)==1); %fixation ntp times (this is time x #events)
+                        end
                     end
 
                     %%%%%%%%%% Remove overlap %%%%%%%%%%%%%%%%%%%%%%
@@ -5936,38 +6228,119 @@ classdef RWAnalysis2 < handle
                     end
                     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+                    % ntrials = length(ntp_gz);
+
+                    %np data aligned with fixations/saccades
                     d_np = obj.MultTable{pt}.d_np{wk}(:,ch);
                     ntp_np = obj.MultTable{pt}.ntp_np{wk};
-
                     % dd = alignRWAITPCData(tsamp_np,ntp_np,d_np,ntp_gz);
                     dd = alignRWAITPCData_mex(tsamp_np,ntp_np,d_np,ntp_gz);
-                    if p.downsampleitpc
-                        D(k) = {dd(1:2:end,:)}; %downsample
-                    else
-                        D(k) = {dd};
-                    end
+                    % [~,d_idx] = min(abs(ntp_np-ntp_gz'));
+                    % d_idx = d_idx(:)+tsamp_np; %trials x time
+                    % nan_idx = any(d_idx>length(d_np),2)|any(d_idx<1,2);
+                    % dd = nan(ntrials,length(tsamp_np)); %keep all trials
+                    % dd(~nan_idx,:) = d_np(d_idx(~nan_idx,:));
+                    D(k) = {dd};
 
-                    d_gz_full = obj.MultTable{pt}.d_gaze_fix{wk};
-                    ntp_gz_full = obj.MultTable{pt}.ntp_gaze{wk}; 
-                    try
-                        d_idx = find(ismember(ntp_gz_full,ntp_gz))+tsamp_gz_npwin;
-                        d_idx(any(d_idx>length(d_gz_full),2)|any(d_idx<1,2),:) = [];
-                        if isscalar(ntp_gz)
-                            GZ(k) = {d_gz_full(d_idx)};
+                    %fixation data aligned with fixations/saccades for
+                    %overlay plot
+                    if p.alirezafix
+                        if p.saccadeflag
+                            d_gz_full = obj.MultTable{pt}.d_gaze2_sac{wk};
                         else
-                            GZ(k) = {d_gz_full(d_idx)'};
+                            d_gz_full = obj.MultTable{pt}.d_gaze2_fix{wk};
                         end
-                    catch ME
-                        disp(ME);
+                        ntp_gz_full = obj.MultTable{pt}.ntp_gaze2{wk};
+                    else
+                        d_gz_full = obj.MultTable{pt}.d_gaze_fix{wk};
+                        ntp_gz_full = obj.MultTable{pt}.ntp_gaze{wk};
                     end
+                    dd = alignRWAITPCData_mex(tsamp_gz_npwin,ntp_gz_full,double(d_gz_full),ntp_gz);
+                    GZ(k) = {dd};     
+
+                    %find durations of saccade/fixations for later
+                    %filtering
+                    fix_sec = nan(1,size(dd,2));
+                    for m=1:size(dd,2)
+                        if p.alirezafix
+                            idx = find(diff(dd(:,m))==1)-tsamp_gz_npwin_center; %always look for next up with alireza data
+                        else
+                            if p.saccadeflag
+                                idx = find(diff(dd(:,m))==1)-tsamp_gz_npwin_center; %if aligned to saccades, look for next up
+                            else
+                                idx = find(diff(dd(:,m))==-1)-tsamp_gz_npwin_center; %if aligned to fixations, look for next down
+                            end
+                        end
+                        idx2 = find(idx>0,1);
+                        if isempty(idx2)
+                            fix_sec(m) = tsamp_gz_npwin_center./fs_gz; %fixation is longer the tsamp_gz_npwin, so setting it to half window length
+                        else
+                            fix_sec(m) = idx(idx2)./fs_gz; %duration of fixation that is aligned with zero
+                        end
+                    end
+                    FSDur(k) = {fix_sec};
+
+                    %head turn aligned with fixations/saccades for overlay plot
+                    d_ht_full = obj.MultTable{pt}.d_imu(wk).gyroY;
+                    ntp_ht_full = obj.MultTable{pt}.ntp_imu{wk}; 
+                    dd = alignRWAITPCData_mex(tsamp_ht_npwin,ntp_ht_full,d_ht_full,ntp_gz);
+                    HT(k) = {dd};
+
+                    %wavelets aligned with fixations/saccades
+                    d_wv_full = obj.MultTable{pt}.d_wav{wk}(:,:,ch); %time x freq
+                    ntp_wv_full = obj.MultTable{pt}.ntp_wav{wk}; 
+                    dd = alignRWAITPCWav_mex(tsamp_wv_npwin,ntp_wv_full,d_wv_full,ntp_gz);
+                    WV(k) = {dd};
+
                 end
             end
             D = cell2mat(D);
             GZ = cell2mat(GZ);
+            HT = cell2mat(HT);
+            WV = cat(3,WV{:});
+            FSDur = cell2mat(FSDur);
+
+            %Remove any outliers
+            ol = isoutlier(max(abs(zscore(D)))); %this type of outlier detection is applied for specgram data as well
+            nan_idx = any(isnan(D)) | any(isnan(GZ)) | any(isnan(HT)) | ol;
+            D(:,nan_idx) = [];
+            GZ(:,nan_idx) = [];
+            HT(:,nan_idx) = [];
+            WV(:,:,nan_idx) = [];
+            FSDur(:,nan_idx) = [];
+
+            %Filter by fixation duration
+            switch p.itpcfixdur
+                case 'High' %keep high duration fixations
+                    fs_idx = FSDur < median(FSDur);
+                case 'Low' %keep low duration fixations
+                    fs_idx = FSDur >= median(FSDur);
+                otherwise
+                    fs_idx = false(1,length(FSDur));
+            end
+            D(:,fs_idx) = [];
+            GZ(:,fs_idx) = [];
+            HT(:,fs_idx) = [];
+            WV(:,:,fs_idx) = [];
+            FSDur(:,fs_idx) = [];
+            fprintf('Mean fix/sac duration: %0.1f\n',mean(FSDur));
+
+            %Remove excessive number of trials
+            if size(D,2)>50000
+                fprintf('Number of trials is %0.0f! Limiting trial count to 50000.\n',size(D,2));
+                lim_idx = randi(size(D,2),50000,1);
+                D = D(:,lim_idx);
+                GZ = GZ(:,lim_idx);
+                HT = HT(:,lim_idx);
+                WV = WV(:,:,lim_idx);
+                FSDur = FSDur(:,lim_idx);
+            end
+
             ntrials = size(D,2);
 
             %downsampling by 2
             if p.downsampleitpc
+                D = D(1:2:end,:);
                 FS_np = FS_np/2;
                 tsamp_np = round(nprng(1)*FS_np):round(nprng(2)*FS_np);
                 tsec_np = tsamp_np/FS_np;
@@ -5978,21 +6351,20 @@ classdef RWAnalysis2 < handle
             if p.shuffleflag
                 cutpoint = randi(ntime_np,[1,ntrials]);
                 cutpoint_gz = randi(ntime_gz_npwin,[1,ntrials]);
+                cutpoint_ht = randi(ntime_ht_npwin,[1,ntrials]);
+                cutpoint_wv = randi(ntime_wv_npwin,[1,ntrials]);
                 for k=1:ntrials
                     D(:,k) = circshift(D(:,k),cutpoint(k),1); %time x freq x trial (shift time)
                     GZ(:,k) = circshift(GZ(:,k),cutpoint_gz(k),1);
+                    HT(:,k) = circshift(HT(:,k),cutpoint_ht(k),1);
+                    WV(:,:,k) = circshift(WV(:,:,k),cutpoint_wv(k),1);
                 end
             end
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-            % [B,A] = iirnotch(62.5/(obj.MultTrans.FS_np/2),0.012);
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%           
 
             %real
-            nan_idx = any(isnan(D)); D(:,nan_idx) = [];
             D = D - mean(D,1);
-            % D = filtfilt(B,A,D);
-            [f,~,cfs] = morseSpecGram(D,FS_np,[2,32]); %2 to 32Hz
-            cfs(permute(repmat(nan_idx,1,1,length(f)),[1,3,2])) = nan; %time x freq x trial
+            [f,~,cfs] = morseSpecGram(D,FS_np,[2,32]); %2 to 32Hz (time x freq x trial)
             
             %Removing edge artifact from wavelet transform (clipping -1 to 1)
             idx = tsec_np>=npclip(1) & tsec_np<=npclip(2);
@@ -6008,32 +6380,44 @@ classdef RWAnalysis2 < handle
             tsec_gz_npwin = tsec_gz_npwin(idx);
             ntime_gz_npwin = length(tsamp_gz_npwin);
 
-            % itpc = exp(1i*(angle(cfs)));
-            itpc = cfs./abs(cfs); %same as above but faster
-            itpc = mean(itpc,3,'omitnan'); %mean across trials in complex
-            % itpc = smoothdata(itpc,1,'movmean',3); %smoothing across time in complex
-            itpc = abs(itpc); %inter-trial phase coherence -> same as plv but mean across trials (no angle difference)
+            idx = tsec_ht_npwin>=npclip(1) & tsec_ht_npwin<=npclip(2);
+            HT = HT(idx,:);
+            tsamp_ht_npwin = tsamp_ht_npwin(idx);
+            tsec_ht_npwin = tsec_ht_npwin(idx);
+            ntime_ht_npwin = length(tsamp_ht_npwin);
 
-            pwr = abs(cfs).^2;
-            pwr = pwr./median(pwr,1,"omitnan"); %full epoch norm (time x freq x trial)
-            pwr = 10*log10(pwr);
-            pwr = squeeze(mean(pwr,3,"omitnan")); %normalized trial avg power in dB (take trial avg in log space)
-            pwr = (pwr-mean(pwr(:)))./std(pwr(:));
+            idx = tsec_wv_npwin>=npclip(1) & tsec_wv_npwin<=npclip(2);
+            WV = WV(idx,:,:);
+            tsamp_wv_npwin = tsamp_wv_npwin(idx);
+            tsec_wv_npwin = tsec_wv_npwin(idx);
+            ntime_wv_npwin = length(tsamp_wv_npwin);
+
+            % itpc = exp(1i*(angle(cfs)));
+            itpc_cfs = cfs./abs(cfs); %same as above but faster
+            % itpc_cfs = smoothdata(itpc_cfs,1,'movmean',FS_np*0.03); %smooth across time (this handles nans better than smooth3) (~15Hz -> 0.443/0.03sec)
+            itpc_cfs = itpc_cfs(1:5:end,:,:); %downsample from 125 to 25Hz
+            itpc = mean(itpc_cfs,3,'omitnan'); %mean across trials in complex
+            itpc = abs(itpc); %inter-trial phase coherence -> same as plv but mean across trials (no angle difference)
+            tsec_itpc = tsec_np(1:5:end);
+
+            %save to object so band-limited itpc can be generated in GUI
+            obj.ITPC.itpc_cfs = itpc_cfs;
+            obj.ITPC.f = f;
+            obj.ITPC.tsec = tsec_itpc;
 
             %permutation
-            % PM = calcRWAITPCPerm(cfs);
-            if (ntrials>10000) || ~p.permflag
-                disp('Skipping permutations...')
+            if ~p.permflag
+                disp('Skipping itpc permutations...')
                 pval = nan;
                 permtype = '';
                 correctiontype = '';
-                nitpc = atanh(itpc);
+                % nitpc = atanh(itpc); %atanh operates on -1 to 1 data like pearson correlation, not itpc (need to remove)
+                nitpc = itpc;
                 nitpc = (nitpc-mean(nitpc(:)))./std(nitpc(:));
                 nitpc_thresh = zeros(size(nitpc));
             else
-                fprintf('Running permutations for %d trials. This can take some time!\n',ntrials);
-                PM = calcRWAITPCPerm_mex(cfs); %itpc, not atanh(itpc)
-                nPM = atanh(PM);
+                fprintf('Running itpc permutations for %d trials. This can take some time!\n',ntrials);
+                nPM = calcRWAITPCPerm_mex(itpc_cfs); %itpc, not atanh(itpc)
 
                 permtype = 'zscore';
                 % correctiontype = 'pixel';
@@ -6059,7 +6443,7 @@ classdef RWAnalysis2 < handle
                 pc_pixel = prctile(max_pixel_pvals(:),[pval*100/2,100-pval*100/2]); %two tail
 
                 %Thresholding real
-                nitpc = (atanh(itpc)-mPM)./sPM;
+                nitpc = (itpc-mPM)./sPM;
                 nitpc_thresh = nitpc;
                 switch correctiontype
                     case 'pixel'
@@ -6071,6 +6455,75 @@ classdef RWAnalysis2 < handle
                 end
             end
 
+            obj.ITPC.nitpc_thresh = nitpc_thresh; %send this to the gui for plotting 2D band-limited itpc significance bar
+
+            if p.fullwalknorm
+                %getting pwr from full walk wavelets (these are smoothed over 2sec window so likely will not show anything!)
+                f = obj.MultTrans.Freq;
+                idx = f>32.5;
+                f(idx) = [];
+                pwr_cfs = 10*log10(WV);
+                pwr_cfs(:,idx,:) = [];
+                pwr = mean(pwr_cfs,3,"omitnan"); %normalized trial avg power in dB (take trial avg in log space)
+                tsec_pwr = tsec_wv_npwin;
+            else
+                %calculating pwr
+                pwr_cfs = abs(cfs).^2+eps;
+                pwr_cfs = smoothdata(pwr_cfs,1,'movmean',FS_np*0.03); %smooth across time (this handles nans better than smooth3) (~15Hz -> 0.443/0.03sec)
+                pwr_cfs = 10*log10(pwr_cfs./median(pwr_cfs,1,"omitnan")); %full epoch norm (time x freq x trial)
+                pwr_cfs = pwr_cfs(1:5:end,:,:); %downsample to 25Hz
+                pwr = mean(pwr_cfs,3,"omitnan"); %normalized trial avg power in dB (take trial avg in log space)
+                tsec_pwr = tsec_np(1:5:end);
+            end
+
+            %permutation
+            if ~p.permflag
+                disp('Skipping pwr permutations...')
+                pval = nan;
+                permtype = '';
+                correctiontype = '';
+                npwr = (pwr-mean(pwr(:)))./std(pwr(:));
+                npwr_thresh = zeros(size(npwr));
+            else
+                fprintf('Running pwr permutations for %d trials. This can take some time!\n',ntrials);
+                nPM = calcRWAITPCPermPwr_mex(pwr_cfs); 
+
+                permtype = 'zscore';
+                % correctiontype = 'pixel';
+                correctiontype = 'fdr';
+                nperm = size(nPM,3);
+                mPM = mean(nPM,3); %mean across permutations 
+                sPM = std(nPM,0,3); %std across permutations
+
+                %Finding clusters/max pixels in permuted data
+                max_clust_info = nan(nperm,1);
+                max_pixel_pvals = zeros(nperm,2);
+                for m=1:nperm
+                    pm = nPM(:,:,m);
+                    pm = (pm-mPM)./sPM;
+                    max_pixel_pvals(m,:) = [min(pm(:)),max(pm(:))]; %pixel correction distributions (pooled across time and freq)
+                    pm(abs(pm)<norminv(1-pval)) = 0;
+                    clustinfo = bwconncomp(pm);
+                    stats = regionprops(clustinfo,pm,'pixelvalues');
+                    max_clust_info(m) = max([0,abs(cellfun(@sum,{stats.PixelValues}))]); %max cluster size using pixel values for each permutation
+                end
+
+                %Finding percentiles of pixel-level distributions
+                pc_pixel = prctile(max_pixel_pvals(:),[pval*100/2,100-pval*100/2]); %two tail
+
+                %Thresholding real
+                npwr = (pwr-mPM)./sPM;
+                npwr_thresh = npwr;
+                switch correctiontype
+                    case 'pixel'
+                        npwr_thresh(npwr_thresh>pc_pixel(1) & npwr_thresh<pc_pixel(2)) = 0;
+                    case 'fdr'
+                        PV = 1-normcdf(abs(npwr));
+                        PV = reshape(mafdr(PV(:),'BHFDR',true),size(PV));
+                        npwr_thresh(PV>=pval) = 0;
+                end
+            end
+
             %Plotting
             fH = figure('Position',[50,50,800,800],'visible','on');
             tl = tiledlayout(3,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
@@ -6079,12 +6532,21 @@ classdef RWAnalysis2 < handle
             fH.UserData.aH1 = aH;
             colormap(aH,"jet");
             hold(aH,'on');
-            contourf(tsec_np,f,nitpc',100,'linecolor','none','parent',aH);
-            contour(tsec_np,f,(nitpc_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
+            contourf(tsec_itpc,f,nitpc',100,'linecolor','none','parent',aH);
+            contour(tsec_itpc,f,(nitpc_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
             set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
             plot(aH,[0,0],[2,32],'--k','LineWidth',2);
-            axis(aH,[-1,1,2,32]);
-            clim(aH,climit)
+            pH = plot(aH,repmat([tsec_itpc(1),tsec_itpc(end)],2,1)',repmat([3,6],2,1),':k');
+            set(pH,'Visible',"off");
+            fH.UserData.pH3 = pH;
+            axis(aH,[tsec_itpc(1),tsec_itpc(end),2,32]);
+            if isnan(pval)
+                clim_itpc = prctile(abs(nitpc(:)),99);
+                clim_itpc = round([-clim_itpc,clim_itpc],1);
+            else
+                clim_itpc = climit;
+            end
+            clim(aH,clim_itpc)
             xlabel(aH,'sec');
             ylabel(aH,'Hz');
             if isempty(str2num(patienttype))
@@ -6103,11 +6565,12 @@ classdef RWAnalysis2 < handle
             rgstr = cell2mat(rgcell(unique(obj.MultTrans.MT.regionnum)));
             transstr = regexprep(num2str(transrng),'\s+','t');
             [PercOverlap,AvgOverlapSec] = obj.calcOverlap(obj.MultTrans.MT,transrng);
-            ttlstr = sprintf('%s, %s, %s-%s, %s-%s, %s-%s, %s \n(n=%s, p<%1.2f, %s, %s, w=%s, o=%0.0fp-%0.0fs, oe=%s, f=%0.1f, s=%0.1f)',...
+            ttlstr = sprintf('%s, %s, %s-%s, %s-%s, %s-%s, %s \n(n=%s, p<%1.2f, %s, %s, w=%s, o=%0.0fp-%0.0fs, oe=%s, f=%0.1fs, s=%0.1fs, sf=%0.0f, ali=%0.0f)',...
                 transtype,desctype,regiontype,rgstr,pttypestr,ptstr,...
                 wktypestr,wkstr,veltype,num2str(ntrials),...
                 pval,permtype,correctiontype,transstr,PercOverlap,...
-                AvgOverlapSec,p.overlapevnts,mean(Stats(:,1),'omitnan'),mean(Stats(:,2),'omitnan'));
+                AvgOverlapSec,p.overlapevnts,mean(Stats(:,1),'omitnan'),...
+                mean(Stats(:,2),'omitnan'),p.saccadeflag,p.alirezafix);
             title(aH,ttlstr); 
             cb = colorbar(aH);
             cblims = [cb.Limits(1),0,cb.Limits(2)];
@@ -6119,13 +6582,18 @@ classdef RWAnalysis2 < handle
             fH.UserData.aH3 = aH;
             colormap(aH,"jet");
             hold(aH,'on');
-            contourf(tsec_np,f,pwr',100,'linecolor','none','parent',aH);
+            contourf(tsec_pwr,f,npwr',100,'linecolor','none','parent',aH);
+            contour(tsec_pwr,f,(npwr_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
             set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
             plot(aH,[0,0],[2,32],'--k','LineWidth',2);
             axis(aH,[-1,1,2,32]);
-            climit = prctile(abs(pwr(:)),99);
-            climit = [-climit,climit];
-            clim(aH,climit)
+            if isnan(pval)
+                clim_pwr = prctile(abs(npwr(:)),99);
+                clim_pwr = [-clim_pwr,clim_pwr];
+            else
+                clim_pwr = climit;
+            end
+            clim(aH,clim_pwr)
             xlabel(aH,'sec');
             ylabel(aH,'Hz');
             cb = colorbar(aH);
@@ -6149,12 +6617,16 @@ classdef RWAnalysis2 < handle
             xlabel(aH,'sec');
 
             yyaxis(aH,'right');
-            gz = mean(GZ,2,'omitnan');
+            gz = zscore(mean(GZ,2,'omitnan'));
             pH = plot(aH,tsec_gz_npwin,gz);
             fH.UserData.pH = pH;
             set(pH,'visible','off');
+            ht = zscore(mean(abs(HT),2,'omitnan'));
+            pH = plot(aH,tsec_ht_npwin,ht);
+            fH.UserData.pH2 = pH;
+            set(pH,'visible','off');
             aH.YAxis(2).Visible = 'off';
-            ylim(aH,[-0.1,1.1]);
+            % ylim(aH,[-0.1,1.1]);
             if p.saccadeflag
                 ylabel(aH,'avg saccade')
             else

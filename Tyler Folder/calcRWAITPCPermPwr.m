@@ -1,4 +1,4 @@
-function PM = calcRWAITPCPerm(cfs)
+function PM = calcRWAITPCPermPwr(cfs)
 
 ntime = size(cfs,1);
 nfreq = size(cfs,2);
@@ -10,14 +10,10 @@ PM = nan(ntime,nfreq,nperm);
 parfor m=1:nperm %permutations
     % wait_msg.Send;
     cutpoint = randi(ntime,[1,ntrials]);
-    cfs_shift = complex(zeros(size(cfs)));
+    cfs_shift = zeros(size(cfs));
     for k=1:ntrials
         cfs_shift(:,:,k) = circshift(cfs(:,:,k),cutpoint(k),1); %time x freq x trial (shift time)
     end
-    % itpc = exp(1i*(angle(cfs_shift)));
-    % itpc = cfs_shift./abs(cfs_shift); %same as above but faster
-    itpc = mean(cfs_shift,3,'omitnan'); %mean across trials in complex
-    % itpc = smoothdata(itpc,1,'movmean',3); %smoothing across time in complex
-    PM(:,:,m) = abs(itpc);
+    PM(:,:,m) = mean(cfs_shift,3,'omitnan'); %mean across trials
 end
 % wait_msg.Destroy;

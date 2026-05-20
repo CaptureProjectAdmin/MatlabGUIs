@@ -1,6 +1,9 @@
 function updateRWNAppFiles(RootDir)
 %Adds new data streams to RWNApp*.mat files without using the GUI.
 
+%Ran this for alireza saccade data on 20230318 for 'D:\RWN', but RW2 Walk7
+%failed. Need to rerun when alireza provides the missing dataset
+
 RWNAppFiles = dir([RootDir,'\RWNApp*.mat']);
 OrigDir = '\\155.100.91.44\d\Data\RealWorldNavigationCory';
 
@@ -13,6 +16,9 @@ for k=1:length(RWNAppFiles)
     origdir = fullfile(OrigDir,ptname,'Original',walkname);
     % vnames = who('-file',rwnappfile);
     Files = findRWAFiles(origdir);
+    % if strcmp(ptname,'RW2') && strcmp(walkname,'Walk7')
+    %     continue
+    % end
 
     disp(rwnappfile);
     disp(origdir);
@@ -46,6 +52,14 @@ for k=1:length(RWNAppFiles)
     %     [ntp_gaze,d_gaze_x,d_gaze_y,d_gaze_fix,fs_gaze] = findPupilGazeNTP(Files);
     % end
     % save(rwnappfile,'ntp_gaze','d_gaze_x','d_gaze_y','d_gaze_fix','fs_gaze','-append');
+    %
+    ntp_gaze2 = []; d_gaze2_fix = []; d_gaze2_sac = []; fs_gaze2 = [];
+    if isempty(Files.gaze2_file)
+        fprintf('%s is missing!\n',Fix_File.name);
+    else
+        [ntp_gaze2,d_gaze2_fix,d_gaze2_sac,fs_gaze2] = findGaze2NTP(Files);
+    end
+    save(rwnappfile,'ntp_gaze2','d_gaze2_fix','d_gaze2_sac','fs_gaze2','-append');
     % 
     % ntp_amb = []; d_amb = []; fs_amb = [];
     % if ~(isempty(Files.chest_drift_csv_file)||isempty(Files.chest_ambient_csv_file))
@@ -59,11 +73,11 @@ for k=1:length(RWNAppFiles)
     % end
     % save(rwnappfile,'ntp_kde','d_kde','fs_kde','-append');
     %
-    ntp_kde2 = []; d_kde2 = []; fs_kde2 = [];
-    if ~(isempty(Files.kde2_file)||isempty(Files.frame_comp_file))
-        [ntp_kde2,d_kde2,fs_kde2] = findKDEs2NTP(Files);
-    end
-    save(rwnappfile,'ntp_kde2','d_kde2','fs_kde2','-append');
+    % ntp_kde2 = []; d_kde2 = []; fs_kde2 = [];
+    % if ~(isempty(Files.kde2_file)||isempty(Files.frame_comp_file))
+    %     [ntp_kde2,d_kde2,fs_kde2] = findKDEs2NTP(Files);
+    % end
+    % save(rwnappfile,'ntp_kde2','d_kde2','fs_kde2','-append');
     % 
     % ntp_bio = []; d_bio = []; fs_bio = [];
     % if ~(isempty(Files.biopac_data_file)||isempty(Files.chest_drift_csv_file))
