@@ -130,8 +130,10 @@ classdef RWAnalysis2 < handle
     %    25) X Add power overlay for canonical freq bands (another option in dropdown -> partially finished - need to fix difference gui) (done) 
     %    26) X Error when All is selected from dropdown and a new plot is generated (done)
     %    27) X Add button to create new fig showing overlays as subplot (add zero horizontal line to power overlays to see significance)
-    %    28) Convert boxplot to barplot with standard error plus dots for each data point (add dot for each channel) and add single bar if second box is empty
-    %    29) Add permutation test for the barplots
+    %    28) X Convert boxplot to barplot with standard error plus dots for each data point (add dot for each channel) and add single bar if second box is empty
+    %    29) X Add permutation test for the barplots
+    %    30) For Beg/End events add beg/end mean/std line in the plotseparateaxis function
+    %    31) Update fdr calculation
     %
     % *ITPCGUI:
     %     1) Compute average duration of fixation triggered theta cycle 
@@ -142,17 +144,18 @@ classdef RWAnalysis2 < handle
     %     6) Compute/plot average phase (same for each patient?)(polar histogram of phase angles)
     %     7) X Add checkbox for saccade
     %     8) X Add power and headturn overlay (filter out trials based on headturn)
-    %     9) X Add separate figure for 2D plot of band-limited itpc with significance bar (done)
+    %     9) **Add separate figure for 2D plot of band-limited itpc with significance bar (fix 95ci!)
     %    10) X Add checkbox for new saccade detection algorithm (done)
     %    11) X Add filter for long fixations vs short fixations to look for freq change in itpc (done) 
     %    12) X Add fixation/saccade to title!! (done)
     %    13) X Add full walk normalization to power and add controls to gui (done)
-    %    14) Add difference calculation
+    %    14) X Add difference calculation (done)
     %    15) X 2D bootstrap was out of range with mean when fixations are aligned with doorways (potential fix by commented out since it takes a long time to compute)
-    %    16) Add overlap (fix) and fixation duration to title
-    %    17) Check average fixation duration in title under high/low durations
+    %    16) X Add overlap (fix) and fixation duration to title (done)
+    %    17) X Check average fixation duration in title under high/low durations (done) 
     %    18) For overlap transitions, need to add corresponding description
-    %    19) Metrix for excluding overlapping fixations
+    %    19) Metric for excluding overlapping fixations
+    %    20) A function for sliding window across event
     %
     % *GLMEGUI: data export! (in/out and conf matrix plots, boxplot comparison with pepisode)
     % X Check model fit for fooof over time (done)
@@ -168,7 +171,7 @@ classdef RWAnalysis2 < handle
         ChanLabels; InOutTimes; DTable; DisabledWalks; FB; Vid; RegionTable;
         StopGoWalks; AnalysisFile; WinSegSec; WinTransSec; 
         MultTable; MultSeg; MultTrans; PredList; PredYlim; PredYscale; UniqueEvents;
-        ITPC; FreqBands; FreqBandLabels;
+        ITPC; FreqBands; FreqBandLabels; MultEye;
     end
 
     %%%%%%%%%%%%%%%%%%%
@@ -603,8 +606,8 @@ classdef RWAnalysis2 < handle
                         % [f,~,cfs] = Spectrogram_Superlet(d,SS.fs_np,[2,120]); %2 to 120Hz
                         cfs(permute(repmat(nan_idx,1,1,length(f)),[1,3,2])) = nan; %time x freq x chan
                         pwr = abs(cfs).^2;
-                        % pwr = smoothdata(pwr,1,'movmean',250*obj.WinSegSec); %smooth across time (this handles nans better than smooth3) (~0.22Hz -> 0.443/2sec cutoff for 2sec window -> might want to decrease this!)
-                        pwr = smoothdata(pwr,1,'movmean',250*0.03); %testing for itpceye power calculation
+                        pwr = smoothdata(pwr,1,'movmean',250*obj.WinSegSec); %smooth across time (this handles nans better than smooth3) (~0.22Hz -> 0.443/2sec cutoff for 2sec window -> might want to decrease this!)
+                        % pwr = smoothdata(pwr,1,'movmean',250*0.03); %testing for itpceye power calculation
                         pwr = pwr./median(pwr,1,"omitnan"); %full epoch norm (time x freq x chan)
 
                         %Realistically only need a 12.5Hz lowpass antialias
@@ -3494,6 +3497,387 @@ classdef RWAnalysis2 < handle
             end
         end %end countMarksPerWalk
         
+        function updateMultTableEye(obj,varargin)
+            %Run this before running plotMultTransITPCEye. This reruns the
+            %wavelet calculation with smoothing parameters for the itpc eye
+            %calculations. Both the full walk normalized power and the
+            %complex unit vectors are saved for faster pwr/itpc
+            %calculations.
+            if isempty(obj.MultTable)
+                error('Run loadMultData first!');
+            end
+            if sum(contains(obj.MultTable{1}.Properties.VariableNames,["d_wav_eye","d_itpc_eye"]))==2
+                error('This function has already been run!');
+            end
+
+            wait_msg = parfor_wait(length(obj.MultTable));
+            for m=1:length(obj.MultTable) %by patient
+                wait_msg.Send;
+                mt = obj.MultTable{m};
+                mt = addvars(mt,repmat({[]},size(mt,1),1),repmat({[]},size(mt,1),1),'NewVariableNames',{'d_wav_eye','d_itpc_eye'},'After','f_wav');
+                for k=1:size(mt,1) %by walk
+                    d_np = mt.d_np{k};
+                    fs_np = mt.fs_np(k);
+                    d_wav_size = size(mt.d_wav{k}); %can use ntp_wav, fs_wav, f_wav for the new variables (sizes must match)
+
+                    d = d_np; nan_idx = isnan(d); d(nan_idx) = 0;
+                    [f,~,cfs] = morseSpecGram(d,fs_np,[2,120]); %2 to 120Hz
+                    cfs(permute(repmat(nan_idx,1,1,length(f)),[1,3,2])) = nan; %time x freq x chan
+                    
+                    pwr = abs(cfs).^2;
+                    pwr = smoothdata(pwr,1,'movmean',fs_np*0.03); %smooth across time (~14.8Hz -> 0.443/0.03sec)
+                    pwr = pwr./median(pwr,1,"omitnan"); %full walk norm (time x freq x chan)
+                    pwr = pwr(1:10:end,:,:);
+
+                    itpc = cfs./abs(cfs); %make unit vector
+                    itpc = smoothdata(itpc,1,'movmean',fs_np*0.03); 
+                    itpc = itpc(1:10:end,:,:); %downsample from 250 to 25Hz
+
+                    if any(d_wav_size~=size(pwr)) || any(d_wav_size~=size(itpc))
+                        error('Size mismatch between d_wav and d_wav_eye or d_itpc_eye!');
+                    end
+                    mt.d_wav_eye{k} = pwr;
+                    mt.d_itpc_eye{k} = itpc;
+                end
+                obj.MultTable{m} = mt;
+            end
+            wait_msg.Destroy;
+        end
+
+        function parseMultEyeData(obj,varargin)
+            p = obj.parseInputs(varargin{:});
+
+            if ~(sum(contains(obj.MultTable{1}.Properties.VariableNames,["d_wav_eye","d_itpc_eye"]))==2)
+                disp('updateMultTableEye needs to be run. This will take some time...');
+                obj.updateMultTableEye;
+            end
+                    
+            transtype = p.transtype; %'Outdoor Beg', 'Outdoor End', 'Doorway'
+            transrng = p.transrng; %default [-3,3] %window to search fixations
+            nprng = [-1,1]; %window for getting np data aligned to fixations
+
+            %Getting trials and specgram data
+            obj.filterMultTransData(varargin{:}); %table of all trials and corresponding info (this creates MT and must be run before getFilteredMultTransData)
+
+            %NP sample rate 
+            FS_np = obj.MultTrans.FS_np;
+            
+            %Get data
+            if p.alirezafix
+                fs_gz = obj.MultTrans.FS_gz2;
+
+                tsamp_gz = round(transrng(1)*fs_gz):round(transrng(2)*fs_gz);
+                tsec_gz = tsamp_gz./fs_gz;
+                ntime_gz = length(tsamp_gz);
+
+                tsamp_gz_npwin = round(nprng(1)*fs_gz):round(nprng(2)*fs_gz);
+                tsec_gz_npwin = tsamp_gz_npwin./fs_gz;
+                ntime_gz_npwin = length(tsamp_gz_npwin);
+                tsamp_gz_npwin_center = find(tsamp_gz_npwin==0);
+            else
+                fs_gz = obj.MultTrans.FS_gz;
+
+                tsamp_gz = round(transrng(1)*fs_gz):round(transrng(2)*fs_gz);
+                tsec_gz = tsamp_gz./fs_gz;
+                ntime_gz = length(tsamp_gz);
+
+                tsamp_gz_npwin = round(nprng(1)*fs_gz):round(nprng(2)*fs_gz);
+                tsec_gz_npwin = tsamp_gz_npwin./fs_gz;
+                ntime_gz_npwin = length(tsamp_gz_npwin);
+                tsamp_gz_npwin_center = find(tsamp_gz_npwin==0);
+            end
+
+            tsamp_np = round(nprng(1)*FS_np):round(nprng(2)*FS_np);
+            tsec_np = tsamp_np/FS_np;
+            ntime_np = length(tsamp_np);
+
+            tsamp_ht_npwin = round(nprng(1)*obj.MultTrans.FS_im):round(nprng(2)*obj.MultTrans.FS_im); %head turn
+            tsec_ht_npwin = tsamp_ht_npwin./obj.MultTrans.FS_im;
+            ntime_ht_npwin = length(tsamp_ht_npwin);
+
+            tsamp_wv_npwin = round(nprng(1)*obj.MultTrans.FS_wv):round(nprng(2)*obj.MultTrans.FS_wv); %wavelet
+            tsec_wv_npwin = tsamp_wv_npwin./obj.MultTrans.FS_wv;
+            ntime_wv_npwin = length(tsamp_wv_npwin);
+
+            tsamp_it_npwin = round(nprng(1)*obj.MultTrans.FS_wv):round(nprng(2)*obj.MultTrans.FS_wv); %itpc (same as wavelet)
+            tsec_it_npwin = tsamp_it_npwin./obj.MultTrans.FS_wv;
+            ntime_it_npwin = length(tsamp_it_npwin);
+
+            [uPtWkCh,~,uPtWkChIdx] = unique(obj.MultTrans.MT(:,{'patient','walk','chan'}));
+
+            D = cell(1,size(uPtWkCh,1));
+            GZ = cell(1,size(uPtWkCh,1));
+            HT = cell(1,size(uPtWkCh,1));
+            WV = cell(1,size(uPtWkCh,1));
+            IT = cell(1,size(uPtWkCh,1));
+            FSDur = cell(1,size(uPtWkCh,1)); %fix/sac durations in sec
+            % Stats = []; %mean fixation, mean saccade durations in sec
+            for k=1:size(uPtWkCh,1)
+                % clc; disp(k/size(uPtWkCh,1));
+
+                idx = find(k==uPtWkChIdx);
+                mt = obj.MultTrans.MT(idx,:);
+                pt = uPtWkCh.patient(k);
+                wk = uPtWkCh.walk(k);
+                ch = uPtWkCh.chan(k);
+
+                if p.alirezafix
+                    gznan = any(isnan(mt.gz2idx),2);
+                    gzidx = round(mt.gz2idx)+tsamp_gz;
+                    if p.saccadeflag
+                        d_gz = obj.MultTable{pt}.d_gaze2_sac{wk};
+                    else
+                        d_gz = obj.MultTable{pt}.d_gaze2_fix{wk};
+                    end
+                    ntp_gz = obj.MultTable{pt}.ntp_gaze2{wk};
+                else
+                    gznan = any(isnan(mt.gzidx),2);
+                    gzidx = round(mt.gzidx)+tsamp_gz;
+                    d_gz = obj.MultTable{pt}.d_gaze_fix{wk};
+                    ntp_gz = obj.MultTable{pt}.ntp_gaze{wk};
+                end
+                if ~isempty(d_gz)
+                    if ~isempty(transtype)
+                        ridx = any(gzidx<1,2)|any(gzidx>length(d_gz),2)|gznan; %remove index
+                        gzidx(ridx,:) = [];
+                        d_gz = reshape(d_gz(gzidx,:),size(gzidx,1),size(gzidx,2))';
+                        ntp_gz = reshape(ntp_gz(gzidx,:),size(gzidx,1),size(gzidx,2))';
+                    end
+
+                    %%%%%%%%%%%%% Calc Stats %%%%%%%%%%%%%%%%%%%%%
+                    % for m=1:size(d_gz,2)
+                    %     fix_start = find(diff(d_gz(:,m))==1);
+                    %     fix_stop = find(diff(d_gz(:,m))==-1);
+                    %     if ~(isempty(fix_start)||isempty(fix_stop))
+                    %         sac_start = fix_stop;
+                    %         sac_stop = fix_start;
+                    % 
+                    %         %calc fixation durations
+                    %         if fix_start(1)>fix_stop(1)
+                    %             fix_stop(1) = [];
+                    %         end
+                    %         if length(fix_start)>length(fix_stop)
+                    %             fix_start = fix_start(1:length(fix_stop));
+                    %         end
+                    %         if length(fix_stop)>length(fix_start)
+                    %             fix_stop = fix_stop(1:length(fix_start));
+                    %         end
+                    % 
+                    %         %calc saccade durations
+                    %         if sac_start(1)>sac_stop(1)
+                    %             sac_stop(1) = [];
+                    %         end
+                    %         if length(sac_start)>length(sac_stop)
+                    %             sac_start = sac_start(1:length(sac_stop));
+                    %         end
+                    %         if length(sac_stop)>length(sac_start)
+                    %             sac_stop = sac_stop(1:length(sac_start));
+                    %         end
+                    % 
+                    %         fix_mean = mean(fix_stop-fix_start,1)./fs_gz;
+                    %         sac_mean = mean(sac_stop-sac_start,1)./fs_gz;
+                    % 
+                    %         if isempty(fix_mean); fix_mean = nan; end
+                    %         if isempty(sac_mean); sac_mean = nan; end
+                    % 
+                    %         Stats = cat(1,Stats,[fix_mean,sac_mean]);
+                    %     end
+                    % end
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                    if p.alirezafix
+                        ntp_gz = ntp_gz(diff(d_gz)==1); %alireza uses two different data streams for fixation/saccades always positive-going
+                    else
+                        if p.saccadeflag
+                            ntp_gz = ntp_gz(diff(d_gz)==-1);
+                        else
+                            ntp_gz = ntp_gz(diff(d_gz)==1); %fixation ntp times (this is time x #events)
+                        end
+                    end
+
+                    %%%%%%%%%% Remove overlap %%%%%%%%%%%%%%%%%%%%%%
+                    if p.rmfixoverlap
+                        m=1;
+                        ovrlp = 2; %2sec overlap (+-1sec window)
+                        [snp,sidx] = sort(ntp_gz);
+                        while m<length(snp)
+                            dnp = snp(m+1)-snp(m); %difference in sec
+                            if dnp<ovrlp
+                                snp(m+1) = [];
+                                sidx(m+1) = [];
+                            else
+                                m=m+1;
+                            end
+                        end
+                        ntp_gz = snp;
+                    end
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                    %np data aligned with fixations/saccades
+                    d_np = obj.MultTable{pt}.d_np{wk}(:,ch);
+                    ntp_np = obj.MultTable{pt}.ntp_np{wk};
+                    dd = alignRWAITPCData_mex(tsamp_np,ntp_np,d_np,ntp_gz);
+                    D(k) = {dd};
+
+                    %fixation data aligned with fixations/saccades for
+                    %overlay plot
+                    if p.alirezafix
+                        if p.saccadeflag
+                            d_gz_full = obj.MultTable{pt}.d_gaze2_sac{wk};
+                        else
+                            d_gz_full = obj.MultTable{pt}.d_gaze2_fix{wk};
+                        end
+                        ntp_gz_full = obj.MultTable{pt}.ntp_gaze2{wk};
+                    else
+                        d_gz_full = obj.MultTable{pt}.d_gaze_fix{wk};
+                        ntp_gz_full = obj.MultTable{pt}.ntp_gaze{wk};
+                    end
+                    dd = alignRWAITPCData_mex(tsamp_gz_npwin,ntp_gz_full,double(d_gz_full),ntp_gz);
+                    GZ(k) = {dd};     
+
+                    %find durations of saccade/fixations for later
+                    %filtering
+                    fix_sec = nan(1,size(dd,2)); %this is saccade if p.saccadeflag is true
+                    for m=1:size(dd,2)
+                        if p.alirezafix
+                            idx = find(diff(dd(:,m))==-1)-tsamp_gz_npwin_center; %always look for next down with alireza data to find the end of sacc/fix period
+                        else
+                            if p.saccadeflag
+                                idx = find(diff(dd(:,m))==1)-tsamp_gz_npwin_center; %if aligned to saccades, look for next up
+                            else
+                                idx = find(diff(dd(:,m))==-1)-tsamp_gz_npwin_center; %if aligned to fixations, look for next down (find the end of fixation to calc duration)
+                            end
+                        end
+                        idx2 = find(idx>0,1);
+                        if isempty(idx2)
+                            fix_sec(m) = tsamp_gz_npwin_center./fs_gz; %fixation is longer the tsamp_gz_npwin, so setting it to half window length
+                        else
+                            fix_sec(m) = idx(idx2)./fs_gz; %duration of fixation that is aligned with zero
+                        end
+                    end
+                    FSDur(k) = {fix_sec};
+
+                    %head turn aligned with fixations/saccades for overlay plot
+                    d_ht_full = obj.MultTable{pt}.d_imu(wk).gyroY;
+                    ntp_ht_full = obj.MultTable{pt}.ntp_imu{wk}; 
+                    dd = alignRWAITPCData_mex(tsamp_ht_npwin,ntp_ht_full,d_ht_full,ntp_gz);
+                    HT(k) = {dd};
+
+                    %wavelets/itpc (complex) aligned with fixations/saccades
+                    d_wv_full = obj.MultTable{pt}.d_wav_eye{wk}(:,:,ch); %time x freq
+                    d_itpc_full = obj.MultTable{pt}.d_itpc_eye{wk}(:,:,ch); %time x freq
+                    ntp_wv_full = obj.MultTable{pt}.ntp_wav{wk}; %same for both wv and itpc
+                    [dd,dd_it] = alignRWAITPCWav_mex(tsamp_wv_npwin,ntp_wv_full,d_wv_full,ntp_gz,d_itpc_full);
+                    WV(k) = {dd};
+                    IT(k) = {dd_it};
+                end
+            end
+            D = cell2mat(D);
+            GZ = cell2mat(GZ);
+            HT = cell2mat(HT);
+            WV = cat(3,WV{:});
+            IT = cat(3,IT{:});
+            FSDur = cell2mat(FSDur);
+
+            %Remove any outliers
+            ol = isoutlier(max(abs(zscore(D)))); %this type of outlier detection is applied for specgram data as well
+            nan_idx = any(isnan(D)) | any(isnan(GZ)) | any(isnan(HT)) | ol;
+            % nan_idx2 = any(isnan(D)) | any(isnan(GZ)) | any(isnan(HT)) | ol | squeeze(any(any(isnan(WV))))' | squeeze(any(any(isnan(IT))))'; %same as nan_idx since D determines nans in WV and IT 
+            D(:,nan_idx) = [];
+            GZ(:,nan_idx) = [];
+            HT(:,nan_idx) = [];
+            WV(:,:,nan_idx) = [];
+            IT(:,:,nan_idx) = [];
+            FSDur(:,nan_idx) = [];
+
+            %Filter by fixation duration
+            switch p.itpcfixdur
+                case 'High' %keep high duration fixations
+                    fs_idx = FSDur < median(FSDur);
+                case 'Low' %keep low duration fixations
+                    fs_idx = FSDur >= median(FSDur);
+                otherwise
+                    fs_idx = false(1,length(FSDur));
+            end
+            D(:,fs_idx) = [];
+            GZ(:,fs_idx) = [];
+            HT(:,fs_idx) = [];
+            WV(:,:,fs_idx) = [];
+            IT(:,:,fs_idx) = [];
+            FSDur(:,fs_idx) = [];
+            fprintf('Mean fix/sac duration: %0.2f\n',mean(FSDur));
+
+            %Remove excessive number of trials
+            if size(D,2)>30000
+                fprintf('Number of trials is %0.0f! Limiting trial count to 30000.\n',size(D,2));
+                lim_idx = randi(size(D,2),30000,1);
+                D = D(:,lim_idx);
+                GZ = GZ(:,lim_idx);
+                HT = HT(:,lim_idx);
+                WV = WV(:,:,lim_idx);
+                IT = IT(:,:,lim_idx);
+                FSDur = FSDur(:,lim_idx);
+            end
+
+            ntrials = size(D,2);
+
+            %%%%%%%%%%%%%% Randomize to check %%%%%%%%%%%%%%%%%
+            if p.shuffleflag
+                cutpoint = randi(ntime_np,[1,ntrials]);
+                cutpoint_gz = randi(ntime_gz_npwin,[1,ntrials]);
+                cutpoint_ht = randi(ntime_ht_npwin,[1,ntrials]);
+                cutpoint_wv = randi(ntime_wv_npwin,[1,ntrials]);
+                cutpoint_it = randi(ntime_it_npwin,[1,ntrials]);
+                for k=1:ntrials
+                    D(:,k) = circshift(D(:,k),cutpoint(k),1); %time x freq x trial (shift time)
+                    GZ(:,k) = circshift(GZ(:,k),cutpoint_gz(k),1);
+                    HT(:,k) = circshift(HT(:,k),cutpoint_ht(k),1);
+                    WV(:,:,k) = circshift(WV(:,:,k),cutpoint_wv(k),1);
+                    IT(:,:,k) = circshift(IT(:,:,k),cutpoint_it(k),1);
+                end
+            end
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%   
+
+            obj.MultEye.D = D;
+            obj.MultEye.GZ = GZ;
+            obj.MultEye.HT = HT;
+            obj.MultEye.WV = WV;
+            obj.MultEye.IT = IT;
+            obj.MultEye.FSDur = FSDur;
+            % obj.MultEye.Stats = Stats;
+            obj.MultEye.MT = obj.MultTrans.MT;
+
+            obj.MultEye.transtype = transtype; %'Outdoor Beg', 'Outdoor End', 'Doorway'
+            obj.MultEye.transrng = transrng; %default [-3,3] %window to search fixations
+            obj.MultEye.nprng = nprng; %window for getting np data aligned to fixations
+
+            obj.MultEye.tsamp_gz = tsamp_gz;
+            obj.MultEye.tsec_gz = tsec_gz;
+            obj.MultEye.ntime_gz = ntime_gz;
+            obj.MultEye.tsamp_gz_npwin = tsamp_gz_npwin;
+            obj.MultEye.tsec_gz_npwin = tsec_gz_npwin;
+            obj.MultEye.ntime_gz_npwin = ntime_gz_npwin;
+            obj.MultEye.tsamp_gz_npwin_center = tsamp_gz_npwin_center;
+
+            obj.MultEye.tsamp_np = tsamp_np;
+            obj.MultEye.tsec_np = tsec_np;
+            obj.MultEye.ntime_np = ntime_np;
+
+            obj.MultEye.tsamp_ht_npwin = tsamp_ht_npwin; %head turn
+            obj.MultEye.tsec_ht_npwin = tsec_ht_npwin;
+            obj.MultEye.ntime_ht_npwin = ntime_ht_npwin;
+
+            obj.MultEye.tsamp_wv_npwin = tsamp_wv_npwin; %wavelet
+            obj.MultEye.tsec_wv_npwin = tsec_wv_npwin;
+            obj.MultEye.ntime_wv_npwin = ntime_wv_npwin;
+
+            obj.MultEye.tsamp_it_npwin = tsamp_it_npwin; %itpc (same as wavelet)
+            obj.MultEye.tsec_it_npwin = tsec_it_npwin;
+            obj.MultEye.ntime_it_npwin = ntime_it_npwin;
+
+            obj.MultEye.ntrials = ntrials;
+        end
+
     end %methods
 
     %%%%%%%%%%%%%%%%%%%%%
@@ -6042,6 +6426,583 @@ classdef RWAnalysis2 < handle
         end
 
         function fH = plotMultTransITPCEye(obj,varargin)
+            p = obj.parseInputs(varargin{:});
+
+            obj.parseMultEyeData(varargin{:}); %generates MultEye
+
+            D = obj.MultEye.D;
+            WV = obj.MultEye.WV;
+            IT = obj.MultEye.IT;
+            GZ = obj.MultEye.GZ;
+            HT = obj.MultEye.HT;
+            Stats = obj.MultEye.FSDur;
+            MT = obj.MultEye.MT;
+            ntrials = obj.MultEye.ntrials;
+
+            tsec_wv_npwin = obj.MultEye.tsec_wv_npwin;
+            tsec_it_npwin = obj.MultEye.tsec_it_npwin;
+            tsec_np = obj.MultEye.tsec_np;
+            tsec_gz_npwin = obj.MultEye.tsec_gz_npwin;
+            tsec_ht_npwin = obj.MultEye.tsec_ht_npwin;
+          
+            warning('off','MATLAB:contour:ConstantData');
+            
+            % transtype = p.transtype; %'Outdoor Beg', 'Outdoor End', 'Doorway'
+            % regiontype = p.regiontype; %'AntHipp','LatTemp','Ent+Peri','PostHipp+Para','All Chans','Custom'
+            % walktype = p.walktype; %'First Walks','Last Walks','Stop Walks','Go Walks','All Walks', '1,2,5'
+            % veltype = p.veltype; %'', 'High Change', 'Low Change'
+            % patienttype = p.patienttype; %'All Patients', '2,4'
+            % desctype = p.desctype; %close, open, etc. (optional, will skip if empty)
+            % transrng = p.transrng; %default [-3,3] %window to search fixations
+            % pval = p.pval; %default p=0.05
+            % if isempty(p.clim)
+            %     climit = [-10,10];
+            % else
+            %     climit = p.clim;
+            % end
+            % if isempty(p.ylim)
+            %     ylimit = [-20,20];
+            % else
+            %     ylimit = p.ylim;
+            % end
+
+            %Getting freq vector
+            f = obj.MultTrans.Freq;
+            idx = f>32.5; %only looking at 2 to 32 Hz
+            f(idx) = [];
+
+            %ITPC
+            itpc_cfs = IT(:,~idx,:); %IT is complex unit vectors (already normalized by vector mag)
+            itpc = mean(itpc_cfs,3); %mean across trials in complex
+            itpc = abs(itpc); %inter-trial phase coherence -> same as plv but mean across trials (no angle difference)
+            tsec_itpc = tsec_it_npwin;
+
+            %save to object so band-limited itpc can be generated in GUI
+            obj.ITPC.itpc_cfs = itpc_cfs;
+            obj.ITPC.f = f;
+            obj.ITPC.tsec = tsec_itpc;
+
+            permtype = 'zscore';
+            correctiontype = p.correctiontype; %pixel or fdr
+            nperm = 2000;
+            pval = p.pval;
+
+            %permutation
+            fprintf('Running itpc permutations for %d trials. This can take some time!\n',ntrials);
+            PM = calcRWAITPCPerm_mex(itpc_cfs,[],nperm); %itpc, not atanh(itpc)
+
+            mPM = mean(PM,3); %mean across permutations (fisherz normalize)
+            sPM = std(PM,0,3); %std across permutations
+
+            zITPC = (itpc-mPM)./sPM;
+            zPM = (PM-mPM)./sPM;
+
+            zITPC_thresh = zITPC;
+            switch correctiontype
+                case 'pixel'
+                    % max-statistic correction across time/frequency
+                    maxAbs = squeeze(max(max(abs(zPM),[],1),[],2));
+                    zcrit = prctile(maxAbs, 100*(1-pval));
+                    zITPC_thresh(abs(zITPC) < zcrit) = 0;
+                case 'fdr'
+                    % empirical two-tailed permutation p-values
+                    pUpper = (1 + sum(PM >= itpc, 3)) ./ (nperm + 1);
+                    pLower = (1 + sum(PM <= itpc, 3)) ./ (nperm + 1);
+                    PV = min(1, 2 .* min(pUpper, pLower));
+                    QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                    zITPC_thresh(QV >= pval) = 0;
+            end
+
+            obj.ITPC.nitpc_thresh = zITPC_thresh; %send this to the gui for plotting 2D band-limited itpc significance bar
+
+            %Power
+            pwr_cfs = WV(:,~idx,:); %this is already normalized (divided by median) by freq across entire walk
+            if ~p.fullwalknorm
+                pwr_cfs = pwr_cfs./median(pwr_cfs,1); %full epoch norm (time x freq x trial)
+            end
+            pwr_cfs = 10*log10(pwr_cfs+eps);
+            pwr = mean(pwr_cfs,3); %normalized trial avg power in dB (take trial avg in log space)
+            tsec_pwr = tsec_wv_npwin;
+            
+            %permutation
+            fprintf('Running pwr permutations for %d trials. This can take some time!\n',ntrials);
+            PM = calcRWAITPCPerm_mex([],pwr_cfs,nperm);
+
+            mPM = mean(PM,3); %mean across permutations
+            sPM = std(PM,0,3); %std across permutations
+
+            zPwr = (pwr-mPM)./sPM;
+            zPM = (PM-mPM)./sPM;
+
+            zPwr_thresh = zPwr;
+            switch correctiontype
+                case 'pixel'
+                    % max-statistic correction across time/frequency
+                    maxAbs = squeeze(max(max(abs(zPM),[],1),[],2));
+                    zcrit = prctile(maxAbs, 100*(1-pval));
+                    zPwr_thresh(abs(zPwr) < zcrit) = 0;
+                case 'fdr'
+                    % empirical two-tailed permutation p-values
+                    pUpper = (1 + sum(PM >= pwr, 3)) ./ (nperm + 1);
+                    pLower = (1 + sum(PM <= pwr, 3)) ./ (nperm + 1);
+                    PV = min(1, 2 .* min(pUpper, pLower));
+                    QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                    zPwr_thresh(QV >= pval) = 0;
+            end
+
+            %Plotting
+            fH = figure('Position',[50,50,800,800],'visible','on');
+            tl = tiledlayout(3,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
+
+            aH = nexttile(tl,1);
+            fH.UserData.aH1 = aH;
+            colormap(aH,"jet");
+            hold(aH,'on');
+            contourf(tsec_itpc,f,zITPC',100,'linecolor','none','parent',aH);
+            contour(tsec_itpc,f,(zITPC_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
+            set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
+            plot(aH,[0,0],[2,32],'--k','LineWidth',2);
+            pH = plot(aH,repmat([tsec_itpc(1),tsec_itpc(end)],2,1)',repmat([3,6],2,1),':k');
+            set(pH,'Visible',"off");
+            fH.UserData.pH3 = pH;
+            axis(aH,[tsec_itpc(1),tsec_itpc(end),2,32]);
+            clim(aH,p.clim)
+            xlabel(aH,'sec');
+            ylabel(aH,'Hz');
+            if isempty(str2num(p.patienttype))
+                pttypestr = p.patienttype;
+            else
+                pttypestr = 'Sel Patients';
+            end
+            ptstr = regexprep(num2str(unique([MT.patient])'),'\s+','');
+            if isempty(str2num(p.walktype))
+                wktypestr = p.walktype;
+            else
+                wktypestr = 'Sel Walks';
+            end
+            wkstr = regexprep(num2str(unique([MT.walk])'),'\s+','');
+            rgcell = {'a','l','e','p'}; %AntHipp, LatTemp, Ent+Peri, PostHipp+Para
+            rgstr = cell2mat(rgcell(unique(MT.regionnum)));
+            if p.fullwalknorm
+                normstr = 'full';
+            else
+                normstr = regexprep(num2str(obj.MultEye.nprng),'\s+','t');
+            end
+            transstr = regexprep(num2str(p.transrng),'\s+','t');
+            [PercOverlap,AvgOverlapSec] = obj.calcOverlap(MT,p.transrng);
+            ttlstr = sprintf(['%s, %s, %s-%s, %s-%s, %s-%s, %s \n(n=%s, ' ...
+                'p<%1.2f, %s, %s, b=%s, w=%s, o=%0.0fp-%0.0fs, oe=%s, fsd=%0.2fs, ' ...
+                'sf=%0.0f, ali=%0.0f, fo=%0.0f, fsf=%s))'],...
+                p.transtype,p.desctype,p.regiontype,rgstr,pttypestr,ptstr,...
+                wktypestr,wkstr,p.veltype,num2str(ntrials),...
+                pval,permtype,correctiontype,normstr,transstr,PercOverlap,...
+                AvgOverlapSec,p.overlapevnts,mean(Stats),...
+                p.saccadeflag,p.alirezafix,p.rmfixoverlap,p.itpcfixdur);
+            title(aH,ttlstr); 
+            cb = colorbar(aH);
+            cblims = [cb.Limits(1),0,cb.Limits(2)];
+            cb.Ticks = cblims;
+            cb.TickLabels = cblims;
+            ylabel(cb,'Zscore')
+
+            aH = nexttile(tl,2);
+            fH.UserData.aH3 = aH;
+            colormap(aH,"jet");
+            hold(aH,'on');
+            contourf(tsec_pwr,f,zPwr',100,'linecolor','none','parent',aH);
+            contour(tsec_pwr,f,(zPwr_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
+            set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
+            plot(aH,[0,0],[2,32],'--k','LineWidth',2);
+            axis(aH,[-1,1,2,32]);
+            clim(aH,p.clim)
+            xlabel(aH,'sec');
+            ylabel(aH,'Hz');
+            cb = colorbar(aH);
+            cblims = [round(cb.Limits(1),1),0,round(cb.Limits(2),1)];
+            cb.Ticks = cblims;
+            cb.TickLabels = cblims;
+            ylabel(cb,'Zscore')
+
+            aH = nexttile(tl,3);
+            fH.UserData.aH2 = aH;
+            d = D-mean(D);
+            md = mean(d,2);
+            sd = std(d,0,2);
+            sd = sd./sqrt(size(D,2)).*1.96;
+            plot(aH,tsec_np,md);
+            hold(aH,'on');
+            plot(aH,tsec_np,md+sd,':k');
+            plot(aH,tsec_np,md-sd,':k');
+            ylim(aH,p.ylim);
+            ylabel(aH,'uV');
+            xlabel(aH,'sec');
+
+            yyaxis(aH,'right');
+            gz = zscore(mean(GZ,2,'omitnan'));
+            pH = plot(aH,tsec_gz_npwin,gz);
+            fH.UserData.pH = pH;
+            set(pH,'visible','off');
+            ht = zscore(mean(abs(HT),2,'omitnan'));
+            pH = plot(aH,tsec_ht_npwin,ht);
+            fH.UserData.pH2 = pH;
+            set(pH,'visible','off');
+            aH.YAxis(2).Visible = 'off';
+            % ylim(aH,[-0.1,1.1]);
+            if p.saccadeflag
+                ylabel(aH,'avg saccade')
+            else
+                ylabel(aH,'avg fixation')
+            end
+            yyaxis(aH,'left');
+           
+            % fstr = sprintf('ITPC_Pt=%d_Wk=%s_Ch=%d.png',pt,regexprep(num2str(wk),'\s+',''),ch);
+            % print(fH,fullfile(obj.RootDir,'Figs','ITPC',fstr),'-dpng','-r300');
+            % close(fH);
+
+        end
+
+        function fH = plotMultTransITPCEyeDiff(obj,varargin)
+            p = obj.parseInputs(varargin{:});
+
+            obj.parseMultEyeData('transtype',p.transtype{1},'regiontype',p.regiontype{1},...
+                'walktype',p.walktype{1},'desctype',p.desctype{1},...
+                'patienttype',p.patienttype{1},'veltype',p.veltype{1},...
+                'customregion',p.customregion{1},'overlapevnts',p.overlapevnts{1},...
+                'itpcfixdur',p.itpcfixdur{1},'transrng',p.transrng,'rmoverlap',p.rmoverlap,...
+                'shuffleflag',p.shuffleflag,'saccadeflag',p.saccadeflag,...
+                'rmfixoverlap',p.rmfixoverlap,'alirezafix',p.alirezafix,...
+                'fullwalknorm',p.fullwalknorm); 
+
+            D1 = obj.MultEye.D;
+            WV1 = obj.MultEye.WV;
+            IT1 = obj.MultEye.IT;
+            GZ1 = obj.MultEye.GZ;
+            HT1 = obj.MultEye.HT;
+            Stats1 = obj.MultEye.FSDur; %fixation or saccade duration in sec
+            MT1 = obj.MultEye.MT;
+            ntrials1 = obj.MultEye.ntrials;
+
+            obj.parseMultEyeData('transtype',p.transtype{2},'regiontype',p.regiontype{2},...
+                'walktype',p.walktype{2},'desctype',p.desctype{2},...
+                'patienttype',p.patienttype{2},'veltype',p.veltype{2},...
+                'customregion',p.customregion{2},'overlapevnts',p.overlapevnts{2},...
+                'itpcfixdur',p.itpcfixdur{2},'transrng',p.transrng,'rmoverlap',p.rmoverlap,...
+                'shuffleflag',p.shuffleflag,'saccadeflag',p.saccadeflag,...
+                'rmfixoverlap',p.rmfixoverlap,'alirezafix',p.alirezafix,...
+                'fullwalknorm',p.fullwalknorm); 
+
+            D2 = obj.MultEye.D;
+            WV2 = obj.MultEye.WV;
+            IT2 = obj.MultEye.IT;
+            GZ2 = obj.MultEye.GZ;
+            HT2 = obj.MultEye.HT;
+            Stats2 = obj.MultEye.FSDur;
+            MT2 = obj.MultEye.MT;
+            ntrials2 = obj.MultEye.ntrials;
+            % ntrials2_actual = sum(~squeeze(any(any(isnan(IT2),1),2)));
+
+            tsec_wv_npwin = obj.MultEye.tsec_wv_npwin;
+            tsec_it_npwin = obj.MultEye.tsec_it_npwin;
+            tsec_np = obj.MultEye.tsec_np;
+            tsec_gz_npwin = obj.MultEye.tsec_gz_npwin;
+            tsec_ht_npwin = obj.MultEye.tsec_ht_npwin;
+          
+            warning('off','MATLAB:contour:ConstantData');
+
+            %Getting freq vector
+            f = obj.MultTrans.Freq;
+            idx = f>32.5; %only looking at 2 to 32 Hz
+            f(idx) = [];
+
+            trialtype = [-ones(1,ntrials1),ones(1,ntrials2)];
+
+            %ITPC
+            cfs = cat(3,IT1(:,~idx,:),IT2(:,~idx,:)); %complex unit vectors
+
+            %Codex suggested using PPC (pairwise-phase consistency) for the
+            %difference calculation with unequal trials. PPC = (n .* ITPC.^2 - 1) ./ (n - 1);
+            ppc1 = (abs(sum(cfs(:,:,trialtype==-1),3)).^2-ntrials1)./(ntrials1.*(ntrials1-1));
+            ppc2 = (abs(sum(cfs(:,:,trialtype==1),3)).^2-ntrials2)./(ntrials2.*(ntrials2-1));
+            dPPC = ppc1-ppc2;
+
+            nperm = 2000;
+            pval = p.pval;
+            correctiontype = p.correctiontype; %pixel or fdr
+            permtype = 'zscore';
+
+            PM = calcRWAITPCDiffPerm_mex(cfs,[],trialtype,nperm); 
+
+            mPM = mean(PM,3);
+            sPM = std(PM,0,3);
+
+            zPPC = (dPPC - mPM) ./ sPM;
+            zPM  = (PM - mPM) ./ sPM;
+
+            zPPC_thresh = zPPC;
+            switch correctiontype
+                case 'pixel'
+                    % max-statistic correction across time/frequency
+                    maxAbs = squeeze(max(max(abs(zPM),[],1),[],2));
+                    zcrit = prctile(maxAbs, 100*(1-pval));
+                    zPPC_thresh(abs(zPPC) < zcrit) = 0;
+                case 'fdr'
+                    % empirical two-tailed permutation p-values
+                    pUpper = (1 + sum(PM >= dPPC, 3)) ./ (nperm + 1);
+                    pLower = (1 + sum(PM <= dPPC, 3)) ./ (nperm + 1);
+                    PV = min(1, 2 .* min(pUpper, pLower));
+                    QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                    zPPC_thresh(QV >= pval) = 0;
+            end
+           
+            %Power
+            pwr = cat(3,WV1(:,~idx,:),WV2(:,~idx,:)); %these are already normalized (divided by median) by freq across entire walk
+            if ~p.fullwalknorm %Normalization is done across the entire walk for each chan in getMultTransData if true
+                pwr = pwr./median(pwr,1); %full epoch norm (time x freq x trial) %already normalized across the entire walk, now normalizing by window
+            end
+            pwr = 10*log10(pwr+eps); %10*log10 normalize (dB) to make a normal distribution for welch's ttest below!!
+
+            %Real (Welch's ttest)
+            tnum = squeeze(mean(pwr(:,:,trialtype==-1),3)-mean(pwr(:,:,trialtype==1),3)); %trial avg diff (time x freq)
+            tdenom = sqrt(std(pwr(:,:,trialtype==-1),0,3).^2./ntrials1+std(pwr(:,:,trialtype==1),0,3).^2./ntrials2);
+            tPwr = tnum./tdenom; %time x freq
+            
+            PM = calcRWAITPCDiffPerm_mex([],pwr,trialtype,nperm);
+
+            mPM = mean(PM,3);
+            sPM = std(PM,0,3);
+
+            zPwr = (tPwr - mPM) ./ sPM;
+            zPM  = (PM - mPM) ./ sPM;
+
+            zPwr_thresh = zPwr;
+            switch correctiontype
+                case 'pixel'
+                    % max-statistic correction across time/frequency
+                    maxAbs = squeeze(max(max(abs(zPM),[],1),[],2));
+                    zcrit = prctile(maxAbs, 100*(1-pval));
+                    zPwr_thresh(abs(zPwr) < zcrit) = 0;
+                case 'fdr'
+                    % empirical two-tailed permutation p-values
+                    pUpper = (1 + sum(PM >= tPwr, 3)) ./ (nperm + 1);
+                    pLower = (1 + sum(PM <= tPwr, 3)) ./ (nperm + 1);
+                    PV = min(1, 2 .* min(pUpper, pLower));
+                    QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                    zPwr_thresh(QV >= pval) = 0;
+            end
+
+            %Plotting
+            fH = figure('Position',[50,50,800,800],'visible','on');
+            tl = tiledlayout(3,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
+
+            aH = nexttile(tl,1);
+            fH.UserData.aH1 = aH;
+            colormap(aH,"jet");
+            hold(aH,'on');
+            contourf(tsec_it_npwin,f,zPPC',100,'linecolor','none','parent',aH);
+            contour(tsec_it_npwin,f,(zPPC_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
+            set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
+            plot(aH,[0,0],[2,32],'--k','LineWidth',2);
+            pH = plot(aH,repmat([tsec_it_npwin(1),tsec_it_npwin(end)],2,1)',repmat([3,6],2,1),':k');
+            set(pH,'Visible',"off");
+            fH.UserData.pH3 = pH;
+            axis(aH,[tsec_it_npwin(1),tsec_it_npwin(end),2,32]);
+            clim(aH,p.clim)
+            xlabel(aH,'sec');
+            ylabel(aH,'Hz');
+            if isempty(str2num(p.patienttype{1}))
+                pttypestr1 = p.patienttype{1};
+            else
+                pttypestr1 = 'Sel Patients';
+            end
+            if isempty(str2num(p.patienttype{2}))
+                pttypestr2 = p.patienttype{2};
+            else
+                pttypestr2 = 'Sel Patients';
+            end
+            ptstr1 = regexprep(num2str(unique([MT1.patient])'),'\s+','');
+            ptstr2 = regexprep(num2str(unique([MT2.patient])'),'\s+','');
+            if isempty(str2num(p.walktype{1}))
+                wktypestr1 = p.walktype{1};
+            else
+                wktypestr1 = 'Sel Walks';
+            end
+            if isempty(str2num(p.walktype{2}))
+                wktypestr2 = p.walktype{2};
+            else
+                wktypestr2 = 'Sel Walks';
+            end
+            wkstr1 = regexprep(num2str(unique([MT1.walk])'),'\s+','');
+            wkstr2 = regexprep(num2str(unique([MT2.walk])'),'\s+','');
+            rgcell = {'a','l','e','p'}; %AntHipp, LatTemp, Ent+Peri, PostHipp+Para
+            rgstr1 = cell2mat(rgcell(unique(MT1.regionnum)));
+            rgstr2 = cell2mat(rgcell(unique(MT2.regionnum)));
+            if p.fullwalknorm
+                normstr = 'full';
+            else
+                normstr = regexprep(num2str(obj.MultEye.nprng),'\s+','t');
+            end
+            transstr = regexprep(num2str(p.transrng),'\s+','t');
+            [PercOverlap1,AvgOverlapSec1] = obj.calcOverlap(MT1,p.transrng);
+            [PercOverlap2,AvgOverlapSec2] = obj.calcOverlap(MT2,p.transrng);
+            title(aH,sprintf(['%s, %s, %s, %s, %s, %s \n(n=%s, p<%1.2f, %s, %s, ' ...
+                'b=%s, w=%s, o=%0.0f::%0.0fp-%0.0f::%0.0fs, oe=%s::%s, ' ...
+                'fsd=%0.2f::%0.2fs, sf=%0.0f, ali=%0.0f, fo=%0.0f, fsf=%s::%s)'],...
+                [p.transtype{1},'::',p.transtype{2}],...
+                [p.desctype{1},'::',p.desctype{2}],...
+                [p.regiontype{1},'-',rgstr1,'::',p.regiontype{2},'-',rgstr2],...
+                [pttypestr1,'-',ptstr1,'::',pttypestr2,'-',ptstr2],...
+                [wktypestr1,'-',wkstr1,'::',wktypestr2,'-',wkstr2],...
+                [p.veltype{1},'::',p.veltype{2}],...
+                [num2str(ntrials1),'::',num2str(ntrials2)],...
+                pval,permtype,correctiontype,normstr,transstr,...
+                PercOverlap1,PercOverlap2,AvgOverlapSec1,AvgOverlapSec2,...
+                p.overlapevnts{1},p.overlapevnts{2},mean(Stats1),mean(Stats2),...
+                p.saccadeflag,p.alirezafix,p.rmfixoverlap,p.itpcfixdur{1},p.itpcfixdur{2}));
+            cb = colorbar(aH);
+            cblims = [cb.Limits(1),0,cb.Limits(2)];
+            cb.Ticks = cblims;
+            cb.TickLabels = cblims;
+            ylabel(cb,'Zscore')
+
+            aH = nexttile(tl,2);
+            fH.UserData.aH3 = aH;
+            colormap(aH,"jet");
+            hold(aH,'on');
+            contourf(tsec_wv_npwin,f,zPwr',100,'linecolor','none','parent',aH);
+            contour(tsec_wv_npwin,f,(zPwr_thresh~=0)',1,'parent',aH,'linecolor','w','linewidth',2);
+            set(aH,'yscale','log','YTick',2.^(1:5),'yticklabel',2.^(1:5),'yminortick','off'); %now in units of standard deviation
+            plot(aH,[0,0],[2,32],'--k','LineWidth',2);
+            axis(aH,[-1,1,2,32]);
+            clim(aH,p.clim)
+            xlabel(aH,'sec');
+            ylabel(aH,'Hz');
+            cb = colorbar(aH);
+            cblims = [round(cb.Limits(1),1),0,round(cb.Limits(2),1)];
+            cb.Ticks = cblims;
+            cb.TickLabels = cblims;
+            ylabel(cb,'Zscore')
+
+            aH = nexttile(tl,3);
+            fH.UserData.aH2 = aH;
+            d1 = mean(D1,2);
+            d2 = mean(D2,2);
+            md = d1-d2;
+            sd = nan(size(md));
+            plot(aH,tsec_np,md);
+            hold(aH,'on');
+            plot(aH,tsec_np,md+sd,':k');
+            plot(aH,tsec_np,md-sd,':k');
+            ylim(aH,p.ylim);
+            ylabel(aH,'uV');
+            xlabel(aH,'sec');
+
+            yyaxis(aH,'right');
+            gz1 = zscore(mean(GZ1,2,'omitnan'));
+            gz2 = zscore(mean(GZ2,2,'omitnan'));
+            pH = plot(aH,tsec_gz_npwin,gz1-gz2);
+            fH.UserData.pH = pH;
+            set(pH,'visible','off');
+            ht1 = zscore(mean(abs(HT1),2,'omitnan'));
+            ht2 = zscore(mean(abs(HT2),2,'omitnan'));
+            pH = plot(aH,tsec_ht_npwin,ht1-ht2);
+            fH.UserData.pH2 = pH;
+            set(pH,'visible','off');
+            aH.YAxis(2).Visible = 'off';
+            % ylim(aH,[-0.1,1.1]);
+            if p.saccadeflag
+                ylabel(aH,'avg saccade')
+            else
+                ylabel(aH,'avg fixation')
+            end
+            yyaxis(aH,'left');
+           
+            % fstr = sprintf('ITPC_Pt=%d_Wk=%s_Ch=%d.png',pt,regexprep(num2str(wk),'\s+',''),ch);
+            % print(fH,fullfile(obj.RootDir,'Figs','ITPC',fstr),'-dpng','-r300');
+            % close(fH);
+
+        end
+
+        
+        %%%%%%%%%%%%%% Old/Unused %%%%%%%%%%%%%%%%%%
+
+        function plotTransSpecGramByWalk(obj,varargin)
+            %plots specgrams for all walks for a specified event and channel
+            %
+            %plotTransSpecGramByWalk('patient',1,'chan',1,'evntnum',1,'transtype','Outdoor Beg');
+
+            p = parseInputs(obj,varargin{:});
+            if isempty(p.patient)
+                error('Need to specify patient!');
+            end
+            if isempty(p.chan)
+                error('Need to specify chan!');
+            end
+            if isempty(p.evntnum)
+                error('Need to specify evntnum!');
+            end
+            if isempty(p.transtype)
+                error('Need to specify transtype!');
+            end
+            pt = p.patient;
+            chan = p.chan;
+            evnt = p.evntnum;
+            trans = p.transtype;
+
+            if all(obj.PatientIdx~=pt)
+                obj.loadData('PatientIdx',pt);
+            end
+           
+            obj.loadVid; %loads all videos for a patient and saves to obj.Vid
+
+            db = obj.DB;
+            db = db(contains(db.Event,trans),:);
+            walk_list = unique(db.Walk)'; walk_list(end) = []; %last walk is in reverse
+            frame_list = nan(1,length(walk_list));
+            np_samp = nan(1,length(walk_list));
+            for k=1:length(walk_list)
+                idx = find(db.Walk==walk_list(k));
+                frame_list(k) = db.PupilFrame(idx(evnt));
+                np_samp(k) = db.NPSample(idx(evnt));
+            end
+
+            winsec = 32;
+
+            fs_np = obj.DTable.fs_np(1);
+            nsamp = winsec*fs_np;
+            tsamp = (-nsamp:nsamp); %+-32 sec (2sec removed for artifact, so +-30sec)
+            tsec = tsamp/fs_np;
+
+            fH = figure('Position',[50,50,1600,1000],'Visible','on');
+            aH = nan(1,length(walk_list)); vH = nan(1,length(walk_list));
+            for k=1:length(walk_list)
+                aH(k) = subplot(length(walk_list),10,(10*k-9:10*k-1),'parent',fH);
+
+                wlk = walk_list(k);
+                frm = frame_list(k);
+                tfull = np_samp(k)+tsamp;
+                d = obj.DTable.d_np{wlk}(tfull,chan);
+                d(d<-500) = 0;
+                d(isnan(d)) = 0;
+                lb = obj.ChanLabels{pt,chan};
+                PSG = PermSpecGram(d,'Fs',250,'FPass',[2,64],'TimeRng',[tsec(1),tsec(end)],'NormRng',[tsec(1)+2,tsec(end)-2]);
+                PSG.calcSpecGram('AnalysisType','Pwr','NormType','Mean','Smoothing',[500,1],'ErrPerc',[]);
+                PSG.plotSpecGram('ShowRaw',true,'Clim',[-5,5],'aH',aH(k));
+                plot(aH(k),[0,0],[0,8],'k'); %center line
+                xlim(aH(k),[tsec(1)+2,tsec(end)-2])
+%                 xlim(aH(k),[-20,20])
+                title(aH(k),sprintf('Walk %0.0f Chan %0.0f (%s)',wlk,chan,lb))
+
+                vH(k) = subplot(length(walk_list),10,10*k,'parent',fH);
+                
+                image(read(obj.Vid.VidObj{obj.Vid.Walk==wlk},frm),'parent',vH(k));
+                axis(vH(k),'image')
+                set(vH(k),'xtick',[],'xticklabel',[],'ytick',[],'yticklabel',[]);
+            end
+
+
+        end
+
+        function fH = plotMultTransITPCEye_Old(obj,varargin)
             %RWA.calcITPCEye(2,1:3,1); %1st 3 walks show a fixation response
             %RWA.calcITPCEye(2,4:7,1); %last 4, no response
             %RWA.calcITPCEye(4,1:3,1); %pt 4 also shows a response
@@ -6289,7 +7250,7 @@ classdef RWAnalysis2 < handle
                     %wavelets aligned with fixations/saccades
                     d_wv_full = obj.MultTable{pt}.d_wav{wk}(:,:,ch); %time x freq
                     ntp_wv_full = obj.MultTable{pt}.ntp_wav{wk}; 
-                    dd = alignRWAITPCWav_mex(tsamp_wv_npwin,ntp_wv_full,d_wv_full,ntp_gz);
+                    dd = alignRWAITPCWav_mex(tsamp_wv_npwin,ntp_wv_full,d_wv_full,ntp_gz,complex([]));
                     WV(k) = {dd};
 
                 end
@@ -6637,85 +7598,6 @@ classdef RWAnalysis2 < handle
             % fstr = sprintf('ITPC_Pt=%d_Wk=%s_Ch=%d.png',pt,regexprep(num2str(wk),'\s+',''),ch);
             % print(fH,fullfile(obj.RootDir,'Figs','ITPC',fstr),'-dpng','-r300');
             % close(fH);
-
-        end
-
-        %%%%%%%%%%%%%% Old/Unused %%%%%%%%%%%%%%%%%%
-
-        function plotTransSpecGramByWalk(obj,varargin)
-            %plots specgrams for all walks for a specified event and channel
-            %
-            %plotTransSpecGramByWalk('patient',1,'chan',1,'evntnum',1,'transtype','Outdoor Beg');
-
-            p = parseInputs(obj,varargin{:});
-            if isempty(p.patient)
-                error('Need to specify patient!');
-            end
-            if isempty(p.chan)
-                error('Need to specify chan!');
-            end
-            if isempty(p.evntnum)
-                error('Need to specify evntnum!');
-            end
-            if isempty(p.transtype)
-                error('Need to specify transtype!');
-            end
-            pt = p.patient;
-            chan = p.chan;
-            evnt = p.evntnum;
-            trans = p.transtype;
-
-            if all(obj.PatientIdx~=pt)
-                obj.loadData('PatientIdx',pt);
-            end
-           
-            obj.loadVid; %loads all videos for a patient and saves to obj.Vid
-
-            db = obj.DB;
-            db = db(contains(db.Event,trans),:);
-            walk_list = unique(db.Walk)'; walk_list(end) = []; %last walk is in reverse
-            frame_list = nan(1,length(walk_list));
-            np_samp = nan(1,length(walk_list));
-            for k=1:length(walk_list)
-                idx = find(db.Walk==walk_list(k));
-                frame_list(k) = db.PupilFrame(idx(evnt));
-                np_samp(k) = db.NPSample(idx(evnt));
-            end
-
-            winsec = 32;
-
-            fs_np = obj.DTable.fs_np(1);
-            nsamp = winsec*fs_np;
-            tsamp = (-nsamp:nsamp); %+-32 sec (2sec removed for artifact, so +-30sec)
-            tsec = tsamp/fs_np;
-
-            fH = figure('Position',[50,50,1600,1000],'Visible','on');
-            aH = nan(1,length(walk_list)); vH = nan(1,length(walk_list));
-            for k=1:length(walk_list)
-                aH(k) = subplot(length(walk_list),10,(10*k-9:10*k-1),'parent',fH);
-
-                wlk = walk_list(k);
-                frm = frame_list(k);
-                tfull = np_samp(k)+tsamp;
-                d = obj.DTable.d_np{wlk}(tfull,chan);
-                d(d<-500) = 0;
-                d(isnan(d)) = 0;
-                lb = obj.ChanLabels{pt,chan};
-                PSG = PermSpecGram(d,'Fs',250,'FPass',[2,64],'TimeRng',[tsec(1),tsec(end)],'NormRng',[tsec(1)+2,tsec(end)-2]);
-                PSG.calcSpecGram('AnalysisType','Pwr','NormType','Mean','Smoothing',[500,1],'ErrPerc',[]);
-                PSG.plotSpecGram('ShowRaw',true,'Clim',[-5,5],'aH',aH(k));
-                plot(aH(k),[0,0],[0,8],'k'); %center line
-                xlim(aH(k),[tsec(1)+2,tsec(end)-2])
-%                 xlim(aH(k),[-20,20])
-                title(aH(k),sprintf('Walk %0.0f Chan %0.0f (%s)',wlk,chan,lb))
-
-                vH(k) = subplot(length(walk_list),10,10*k,'parent',fH);
-                
-                image(read(obj.Vid.VidObj{obj.Vid.Walk==wlk},frm),'parent',vH(k));
-                axis(vH(k),'image')
-                set(vH(k),'xtick',[],'xticklabel',[],'ytick',[],'yticklabel',[]);
-            end
-
 
         end
 
