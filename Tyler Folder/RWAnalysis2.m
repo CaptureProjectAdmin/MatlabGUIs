@@ -6628,9 +6628,9 @@ classdef RWAnalysis2 < handle
             mPM = mean(PM,3); %mean across permutations
             sPM = std(PM,0,3); %std across permutations
 
-            obj.ITPC.PM_pwr = PM_pwr;
-            obj.ITPC.mPM_pwr = mPM_pwr;
-            obj.ITPC.sPM_pwr = sPM_pwr;
+            obj.ITPC.PM_pwr = PM;
+            obj.ITPC.mPM_pwr = mPM;
+            obj.ITPC.sPM_pwr = sPM;
 
             zPwr = (pwr-mPM)./sPM;
             zPM = (PM-mPM)./sPM;
