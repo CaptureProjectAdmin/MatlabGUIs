@@ -1,4 +1,4 @@
-function PM = calcRWAPerm(pwr,bpwr,trialtype,pwr_z)
+function PM = calcRWAPerm(pwr,bpwr,trialtype,pwr_z,nperm)
 %pwr (time x freq x trial), bpwr (1 x freq) -> baseline power, trialtype is
 %-1 or 1 for calculating difference between specgrams or 0 for a single
 %specgram. pwr_z is mean/std for applying zscore (2 x freq x trial).
@@ -8,7 +8,7 @@ nfreq = size(pwr,2);
 ntrials = size(pwr,3);
 ntrials1 = sum(trialtype==-1);
 ntrials2 = sum(trialtype==1);
-nperm = 1000;
+% nperm = 1000;
 
 if isscalar(trialtype)
     permtype = 1; %shift
@@ -24,7 +24,8 @@ else
     zflag = true;
 end
 
-rng('shuffle'); %seed the random stream with clock time
+rng(1, 'twister');
+% rng('shuffle'); %seed the random stream with clock time
 PM = nan(ntime,nfreq,nperm);
 % wait_msg = parfor_wait(nperm);
 parfor m=1:nperm %permutations

@@ -132,8 +132,10 @@ classdef RWAnalysis2 < handle
     %    27) X Add button to create new fig showing overlays as subplot (add zero horizontal line to power overlays to see significance)
     %    28) X Convert boxplot to barplot with standard error plus dots for each data point (add dot for each channel) and add single bar if second box is empty
     %    29) X Add permutation test for the barplots
-    %    30) For Beg/End events add beg/end mean/std line in the plotseparateaxis function
-    %    31) Update fdr calculation
+    %    30) X For Beg/End events add beg/end mean/std line in the plotseparateaxis function
+    %    31) X Update fdr calculation (kept it as normcdf)
+    %    32) X Save separate axis and bar graph as png/fig
+    %    33) X Incorporate alireza fixation into gui (add smoothing - low/high pass filters in gui) (done) 
     %
     % *ITPCGUI:
     %     1) Compute average duration of fixation triggered theta cycle 
@@ -156,8 +158,13 @@ classdef RWAnalysis2 < handle
     %    18) For overlap transitions, need to add corresponding description
     %    19) Metric for excluding overlapping fixations
     %    20) A function for sliding window across event
+    %    21) X Save out data and figures (done)
     %
-    % *GLMEGUI: data export! (in/out and conf matrix plots, boxplot comparison with pepisode)
+    % *GLMEGUI: 
+    %     1) X Data export! (done)
+    %     2) in/out and conf matrix plots
+    %     3) boxplot comparison with pepisode
+    %
     % X Check model fit for fooof over time (done)
     % X Find frame of 1st fixation to each of the landmarks for each walk and add to events (add Landmark event, in description add landmark ID and remembered/forgotten) (done) 
     % X Why are After Rec Task, more than 5, less than 2, Before Rec Task descriptions missing for landmark events (done)  
@@ -225,9 +232,9 @@ classdef RWAnalysis2 < handle
             %follow the standard predictor pipeline and are calculated
             %direction in the plotting functions.
             obj.PredList = [...
-                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg','of','kd2','ac','th','al','be','ga','hg'};...
-                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR','FooofOf','KDE2','ACC','Theta','Alpha','Beta','Gamma','HG'};...
-                {'Velocity (m/s)','Fixation Percentage','Event Boundary Agreement','Relative Luminance','Normalized Phasic EDA','P-Episode Theta','P-Episode Alpha','P-Episode Low Beta','P-Episode High Beta','Head-Turn (rad/sec?)','Normalized Fooof Exponent','Evoked Potential (mV?)','Theta-Gamma Ratio','Normalized Fooof Offset','Event Boundary Agreement','Acceleration (m/s^2)','Zscore Power','Zscore Power','Zscore Power','Zscore Power','Zscore Power'};...
+                {'xs','gz','kd','am','ed','pe1','pe2','pe3','pe4','gy','ex','np','tg','of','kd2','ac','th','al','be','ga','hg','gz2_fix','gz2_sac'};...
+                {'Vel','Fix','KDE','Amb','Eda','PeT','PeA','PeBl','PeBh','HeadTurn','FooofEx','EP','TGR','FooofOf','KDE2','ACC','Theta','Alpha','Beta','Gamma','HG','Fix2','Sac2'};...
+                {'Velocity (m/s)','Fixation Percentage','Event Boundary Agreement','Relative Luminance','Normalized Phasic EDA','P-Episode Theta','P-Episode Alpha','P-Episode Low Beta','P-Episode High Beta','Head-Turn (rad/sec?)','Normalized Fooof Exponent','Evoked Potential (mV?)','Theta-Gamma Ratio','Normalized Fooof Offset','Event Boundary Agreement','Acceleration (m/s^2)','Zscore Power','Zscore Power','Zscore Power','Zscore Power','Zscore Power','Fixation Percentage','Saccade Percentage'};...
                 ];
 
             %List of ylimits for predictor variables. This is used to
@@ -235,7 +242,7 @@ classdef RWAnalysis2 < handle
             %plotMultTransSpecGramPerm.
             obj.PredYlim = [[0,1.5];[0,1];[1,7];[0,500];[-0.2,0.5];[0,0.3];...
                 [0,0.3];[0,0.3];[0,0.3];[0,40];[0.9,1.1];[-100,100];...
-                [0.7,1.3];[0.9,1.1];[0.02,0.2];[-1.5,1.5];[-10,10];[-10,10];[-10,10];[-10,10];[-10,10]];
+                [0.7,1.3];[0.9,1.1];[0.02,0.2];[-1.5,1.5];[-10,10];[-10,10];[-10,10];[-10,10];[-10,10];[0,1];[0,1]];
 
             %Scale factor for generating list of y offsets for plotting a
             %raster of zscored predictor variables.
@@ -316,6 +323,7 @@ classdef RWAnalysis2 < handle
             p.saveflag = false;
             p.savepath = ''; %directory for saving files
             p.permtype = ''; %standard, zscore (use with plotMultTransSpecGramPerm)
+            p.nperm = 1000; %default number of permutations
             p.correctiontype = ''; %cluster, pixel, fdr (use with plotMultTransSpecGramPerm)
             p.pval = 0.05; %pval for specgrams
             p.pvalclust = 0.01; %pval to use for cluster correction
@@ -352,6 +360,7 @@ classdef RWAnalysis2 < handle
             p.rmfixoverlap = false; %remove overlapping fixations or saccades for itpc
             p.itpcfixdur = ''; %high, low, or empty (filters fixations/saccades by duration)
             p.alirezafix = false; %use alireza fixations
+            p.fixsmooth = false; %smooth fixations across time in MultTransSpecGramGUI using 1Hz low pass
 
             if ~all(ismember(InputNames,[PropNames;fieldnames(p)]))
                 error('Input names are incorrect!')
@@ -4003,7 +4012,7 @@ classdef RWAnalysis2 < handle
             %Permutations
             disp('Running permutations...')
             % PM = calcRWAPerm(pwr(baseidx,:,:),bpwr,0,pwr_z); %trialtype=0 for single specgram (vector of -1 or 1 for all trials when computing specgram difference)
-            PM = calcRWAPerm_mex(pwr(baseidx,:,:),bpwr,0,pwr_z); %1.3 times faster
+            PM = calcRWAPerm_mex(pwr(baseidx,:,:),bpwr,0,pwr_z,nperm); %1.3 times faster
 
             pm_freq = reshape(permute(PM,[1,3,2]),[],nfreq); %(ntime*nperm) x nfreq (need this for standard+fdr)
             if all(baseidx) %if baseline is full window
@@ -4030,13 +4039,25 @@ classdef RWAnalysis2 < handle
                         max_pixel_pvals(m,:) = [min(pm(:)),max(pm(:))]; %pixel correction distributions (pooled across time and freq)
                         pm(pm>squeeze(pc(1,:,:)) & pm<squeeze(pc(2,:,:))) = 0;
                     case 'zscore'
+                        % ppm = pm; %used for fdr+cluster
                         pm = (pm-mPM)./sPM;
                         max_pixel_pvals(m,:) = [min(pm(:)),max(pm(:))]; %pixel correction distributions (pooled across time and freq)
                         switch correctiontype
                             case 'fdr+cluster'
-                                PV = 1-normcdf(abs(pm));
+                                PV = 2*(1-normcdf(abs(pm)));
+                                PV = min(PV,1);
                                 PV = reshape(mafdr(PV(:),'BHFDR',true),size(PV));
                                 pm(PV>=pval) = 0;
+                                %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                % empirical two-tailed permutation p-values
+                                % need to update PM cluster loop above if
+                                % applying cluster correction
+                                % pUpper = (1 + sum(PM >= ppm, 3)) ./ (nperm + 1);
+                                % pLower = (1 + sum(PM <= ppm, 3)) ./ (nperm + 1);
+                                % PV = min(1, 2 .* min(pUpper, pLower));
+                                % QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                                % pm(QV >= pval) = 0;
+                                %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
                             otherwise
                                 pm(abs(pm)<norminv(1-pval)) = 0;
                         end
@@ -4067,15 +4088,29 @@ classdef RWAnalysis2 < handle
                             npwr_thresh(npwr_thresh>squeeze(pc(1,:,:)) & npwr_thresh<squeeze(pc(2,:,:))) = 0;
                     end
                 case 'zscore'
+                    % ppwr = npwr; %used in fdr calc
                     npwr = (npwr-mPM)./sPM;
                     npwr_se = (npwr_se-mPM)./sPM;
                     npwr_thresh = npwr;
                     npwr_trials = (npwr_trials-mPM)./sPM;
                     switch correctiontype
                         case {'fdr','fdr+cluster'}
-                            PV = 1-normcdf(abs(npwr));
+                            PV = 2*(1-normcdf(abs(npwr))); %needs to be 2-tailed! this is only valid if npwr is roughly gaussian
+                            PV = min(PV,1);
                             PV = reshape(mafdr(PV(:),'BHFDR',true),size(PV));
                             npwr_thresh(PV>=pval) = 0;
+                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            % The number of permutations has to be
+                            % increased to ~5000 for this to work.
+                            % empirical two-tailed permutation p-values
+                            % need to update PM cluster loop above if
+                            % applying cluster correction
+                            % pUpper = (1 + sum(PM >= ppwr, 3)) ./ (nperm + 1);
+                            % pLower = (1 + sum(PM <= ppwr, 3)) ./ (nperm + 1);
+                            % PV = min(1, 2 .* min(pUpper, pLower));
+                            % QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                            % npwr_thresh(QV >= pval) = 0;
+                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
                         case 'pixel'
                             npwr_thresh(npwr_thresh>pc_pixel(1) & npwr_thresh<pc_pixel(2)) = 0;
                         otherwise %cluster or empty
@@ -4094,6 +4129,9 @@ classdef RWAnalysis2 < handle
                     % clust_info = cellfun(@numel,clustinfo.PixelIdxList);
                     clust_threshold = prctile(max_clust_info,100-pvalclust*100);
                     whichclusters2remove = find(clust_info<clust_threshold);
+                    if isempty(whichclusters2remove)
+                        disp('No clusters were removed');
+                    end
                     for k=1:length(whichclusters2remove)
                         npwr_thresh(clustinfo.PixelIdxList{whichclusters2remove(k)})=0;
                     end
@@ -4120,15 +4158,15 @@ classdef RWAnalysis2 < handle
                 set(evH,'Visible','off');
             end
             fH.UserData.evH = evH;
+            fH.UserData.np_m = np_m;
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             pH = nan(size(obj.PredList,2),4);
             set(aH,'FontName','Arial','FontSize',18,'TitleFontSizeMultiplier',0.8);
             yyaxis(aH,'right');
             predytick = -(0:size(obj.PredList,2)-1)*obj.PredYscale;
-            [B,A] = butter(3,1/(obj.MultTrans.FS_xs/2),'low'); %filter for acceleration
             for k=1:size(obj.PredList,2) %xs,gz,kd,am,ed,pe1,pe2,pe3,gy,ex
-                if any(contains(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
-                    fband = obj.FreqBands(contains(obj.FreqBandLabels,obj.PredList{2,k}),:);
+                if any(strcmp(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
+                    fband = obj.FreqBands(strcmp(obj.FreqBandLabels,obj.PredList{2,k}),:);
                     fidx = freq>=fband(1) & freq<fband(2);
                     tx = tsec;
                     dxx_me = mean(npwr(:,fidx),2,'omitnan');
@@ -4139,7 +4177,8 @@ classdef RWAnalysis2 < handle
                     pH(k,3) = plot(aH,tx,dxx_se(:,2),':k','LineWidth',0.5);
                     pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 else
-                    if contains(obj.PredList{1,k},'ac')
+                    if strcmp(obj.PredList{1,k},'ac')
+                        [B,A] = butter(3,1/(obj.MultTrans.FS_xs/2),'low'); %filter for acceleration
                         dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,1}]);
                         nanidx = any(isnan(dx));
                         dx(:,nanidx) = 0;
@@ -4147,23 +4186,35 @@ classdef RWAnalysis2 < handle
                         dx(:,nanidx) = nan;
                         dx = diff(dx).*obj.MultTrans.FS_xs; dx(end+1,:) = dx(end,:);
                         tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,1}]);
+                    elseif any(strcmp(obj.PredList{1,k},{'gz2_fix','gz2_sac'}))
+                        dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,k}]);
+                        tx = obj.MultTrans.MTd.('tsec_gz2');
                     else
                         dx = obj.MultTrans.MTd.(['d_',obj.PredList{1,k}]);
                         tx = obj.MultTrans.MTd.(['tsec_',obj.PredList{1,k}]);
                     end
                     %these predictors have outliers that need to be removed
                     %(binary data like gz/pe don't need outliers removed)
-                    if contains(obj.PredList{1,k},["xs","am","ed","ac"])
+                    if any(strcmp(obj.PredList{1,k},["xs","am","ed","ac"]))
                         dxx = dx(:,~isoutlier(mean(dx)));
                     else
                         dxx = dx;
                     end
-                    if contains(obj.PredList{1,k},["ex","tg","of"])
+                    if any(strcmp(obj.PredList{1,k},["ex","tg","of"]))
                         dxx = dxx./mean(dxx,1,'omitnan'); %normalize fooof exponent/offset or theta/gamma
                     end
                     if p.predabs
-                        if contains(obj.PredList{1,k},'gy')
+                        if strcmp(obj.PredList{1,k},'gy')
                             dxx = abs(dxx); %make head turn all pos for now
+                        end
+                    end
+                    if p.fixsmooth
+                        if any(strcmp(obj.PredList{1,k},{'gz','gz2_fix','gz2_sac'}))
+                            [B,A] = butter(3,1/(obj.MultTrans.FS_gz/2),'low'); %filter for acceleration
+                            nanidx = any(isnan(dxx));
+                            dxx(:,nanidx) = 0;
+                            dxx = filtfilt(B,A,dxx);
+                            dxx(:,nanidx) = nan;
                         end
                     end
                     dxx_me = mean(dxx,2,"omitnan");
@@ -4177,7 +4228,6 @@ classdef RWAnalysis2 < handle
             end  
             fH.UserData.pH = pH;
             set(pH,'visible','off');
-            %%%%%%%%%%%%%%% Fix Error
             if contains(p.predtype,'All')
                 if isempty(p.predidxs)
                     predidxs = 1:size(obj.PredList,2);
@@ -4691,7 +4741,7 @@ classdef RWAnalysis2 < handle
             %Permutations
             disp('Running permutations...')
             % PM = calcRWAPerm(pwr,nan(1,nfreq),trialtype);
-            PM = calcRWAPerm_mex(pwr,nan(1,nfreq),trialtype,nan(2,1)); %2.5 times faster
+            PM = calcRWAPerm_mex(pwr,nan(1,nfreq),trialtype,nan(2,1),nperm); %2.5 times faster
 
             %Finding percentiles of permuted distributions
             pm_freq = reshape(permute(PM,[1,3,2]),[],nfreq); %(ntime*nperm) x nfreq
@@ -4714,13 +4764,25 @@ classdef RWAnalysis2 < handle
                         max_pixel_pvals(m,:) = [min(pm(:)),max(pm(:))]; %pixel correction distributions (pooled across time and freq -> maybe only pool across time?)
                         pm(pm>squeeze(pc(1,:,:)) & pm<squeeze(pc(2,:,:))) = 0;
                     case 'zscore'
+                        % ppm = pm; %used for fdr+cluster
                         pm = (pm-mPM)./sPM;
                         max_pixel_pvals(m,:) = [min(pm(:)),max(pm(:))]; %pixel correction distributions (pooled across time and freq -> maybe only pool across time?)
                         switch correctiontype
                             case 'fdr+cluster'
-                                PV = 1-normcdf(abs(pm));
+                                PV = 2*(1-normcdf(abs(pm)));
+                                PV = min(PV,1);
                                 PV = reshape(mafdr(PV(:),'BHFDR',true),size(PV));
                                 pm(PV>=pval) = 0;
+                                %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                % empirical two-tailed permutation p-values
+                                % need to update PM cluster loop above if
+                                % applying cluster correction
+                                % pUpper = (1 + sum(PM >= ppm, 3)) ./ (nperm + 1);
+                                % pLower = (1 + sum(PM <= ppm, 3)) ./ (nperm + 1);
+                                % PV = min(1, 2 .* min(pUpper, pLower));
+                                % QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                                % pm(QV >= pval) = 0;
+                                %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
                             otherwise
                                 pm(abs(pm)<norminv(1-pval)) = 0; %should divide pval/2 for 2-tail?
                         end
@@ -4751,14 +4813,26 @@ classdef RWAnalysis2 < handle
                             npwr_thresh(npwr_thresh>squeeze(pc(1,:,:)) & npwr_thresh<squeeze(pc(2,:,:))) = 0;
                     end
                 case 'zscore'
+                    % ppwr = npwr; %used in fdr calc
                     npwr = (npwr-mPM)./sPM;
                     npwr_se = (npwr_se-mPM)./sPM;
                     npwr_thresh = npwr;
                     switch correctiontype
                         case {'fdr','fdr+cluster'}
-                            PV = 1-normcdf(abs(npwr));
+                            PV = 2*(1-normcdf(abs(npwr))); %needs to be two-tailed! 
+                            PV = min(PV,1);
                             PV = reshape(mafdr(PV(:),'BHFDR',true),size(PV));
                             npwr_thresh(PV>=pval) = 0;
+                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            % empirical two-tailed permutation p-values
+                            % need to update PM cluster loop above if
+                            % applying cluster correction
+                            % pUpper = (1 + sum(PM >= ppwr, 3)) ./ (nperm + 1);
+                            % pLower = (1 + sum(PM <= ppwr, 3)) ./ (nperm + 1);
+                            % PV = min(1, 2 .* min(pUpper, pLower));
+                            % QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
+                            % npwr_thresh(QV >= pval) = 0;
+                            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
                         case 'pixel'
                             npwr_thresh(npwr_thresh>pc_pixel(1) & npwr_thresh<pc_pixel(2)) = 0;
                         otherwise %cluster or empty
@@ -4774,6 +4848,9 @@ classdef RWAnalysis2 < handle
 %                 clust_info = cellfun(@numel,clustinfo.PixelIdxList);
                 clust_threshold = prctile(max_clust_info,100-pvalclust*100);
                 whichclusters2remove = find(clust_info<clust_threshold);
+                if isempty(whichclusters2remove)
+                    disp('No clusters were removed');
+                end
                 for k=1:length(whichclusters2remove)
                     npwr_thresh(clustinfo.PixelIdxList{whichclusters2remove(k)})=0;
                 end
@@ -4794,7 +4871,7 @@ classdef RWAnalysis2 < handle
             predytick = -(0:size(obj.PredList,2)-1)*obj.PredYscale;
             [B,A] = butter(3,1/(obj.MultTrans.FS_xs/2),'low'); %filter for acceleration
             for k=1:size(obj.PredList,2) %xs,gz,kd,am,ed
-                if any(contains(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
+                if any(strcmp(obj.PredList{1,k},{'th','al','be','ga','hg'})) %canonical bands
                     fband = obj.FreqBands(contains(obj.FreqBandLabels,obj.PredList{2,k}),:);
                     fidx = freq>=fband(1) & freq<fband(2);
                     tx = tsec;
@@ -4806,12 +4883,16 @@ classdef RWAnalysis2 < handle
                     pH(k,3) = plot(aH,tx,dxx_se(:,2),':k','LineWidth',0.5);
                     pH(k,4) = plot(aH,tx,dxx_zs,'-k','LineWidth',2);
                 else
-                    if contains(obj.PredList{1,k},'ac') %acceleration
+                    if strcmp(obj.PredList{1,k},'ac') %acceleration
                         dx1 = MTd1.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx1)); dx1(:,nanidx) = 0; dx1 = filtfilt(B,A,dx1); dx1(:,nanidx) = nan;
                         dx1 = diff(dx1).*obj.MultTrans.FS_xs; dx1(end+1,:) = dx1(end,:);
                         dx2 = MTd2.(['d_',obj.PredList{1,1}]); nanidx = any(isnan(dx2)); dx2(:,nanidx) = 0; dx2 = filtfilt(B,A,dx2); dx2(:,nanidx) = nan;
                         dx2 = diff(dx2).*obj.MultTrans.FS_xs; dx2(end+1,:) = dx2(end,:);
                         tx = MTd1.(['tsec_',obj.PredList{1,1}]);
+                    elseif any(strcmp(obj.PredList{1,k},{'gz2_fix','gz2_sac'}))
+                        dx1 = MTd1.(['d_',obj.PredList{1,k}]);
+                        dx2 = MTd2.(['d_',obj.PredList{1,k}]);
+                        tx = MTd1.('tsec_gz2');
                     else
                         dx1 = MTd1.(['d_',obj.PredList{1,k}]);
                         dx2 = MTd2.(['d_',obj.PredList{1,k}]);
@@ -4819,19 +4900,19 @@ classdef RWAnalysis2 < handle
                     end
                     %these predictors have outliers that need to be removed
                     %(binary data like gz/pe don't need outliers removed)
-                    if contains(obj.PredList{1,k},["xs","am","ed","ac"])
+                    if any(strcmp(obj.PredList{1,k},["xs","am","ed","ac"]))
                         dxx1 = dx1(:,~isoutlier(mean(dx1)));
                         dxx2 = dx2(:,~isoutlier(mean(dx2)));
                     else
                         dxx1 = dx1;
                         dxx2 = dx2;
                     end
-                    if contains(obj.PredList{1,k},["ex","tg","of"])
+                    if any(strcmp(obj.PredList{1,k},["ex","tg","of"]))
                         dxx1 = dxx1./mean(dxx1,1,'omitnan'); %normalize fooof exponent
                         dxx2 = dxx2./mean(dxx2,1,'omitnan');
                     end
                     if p.predabs
-                        if contains(obj.PredList{1,k},'gy')
+                        if strcmp(obj.PredList{1,k},'gy')
                             dxx1 = abs(dxx1); %make head turn all pos for now
                             dxx2 = abs(dxx2);
                         end
@@ -5620,14 +5701,17 @@ classdef RWAnalysis2 < handle
             % uptch = obj.MultSeg.uPtChan;
 
             for k=1:length(obj.UniqueEvents)
-                ev = regexprep(obj.UniqueEvents{k},'\s+','');
-                ms.(ev) = p.segevntwinsec - ms.(ev);
-                ms.(ev)(ms.(ev)<0) = 0;
-                ms.(ev) = ms.(ev)./p.segevntwinsec;
-                if p.segmkevntbin
-                    ms.(ev)(ms.(ev)>0) = 1;
-                elseif p.segrmevntzeros
-                    ms.(ev)(ms.(ev)==0) = nan;
+                try
+                    ev = regexprep(obj.UniqueEvents{k},'\s+','');
+                    ms.(ev) = p.segevntwinsec - ms.(ev);
+                    ms.(ev)(ms.(ev)<0) = 0;
+                    ms.(ev) = ms.(ev)./p.segevntwinsec;
+                    if p.segmkevntbin
+                        ms.(ev)(ms.(ev)>0) = 1;
+                    elseif p.segrmevntzeros
+                        ms.(ev)(ms.(ev)==0) = nan;
+                    end
+                catch
                 end
             end
 
@@ -6484,15 +6568,24 @@ classdef RWAnalysis2 < handle
 
             permtype = 'zscore';
             correctiontype = p.correctiontype; %pixel or fdr
-            nperm = 2000;
+            nperm = p.nperm;
             pval = p.pval;
+
+            obj.ITPC.permtype = permtype;
+            obj.ITPC.correctiontype = correctiontype;
+            obj.ITPC.nperm = nperm;
+            obj.ITPC.pval = pval;
 
             %permutation
             fprintf('Running itpc permutations for %d trials. This can take some time!\n',ntrials);
             PM = calcRWAITPCPerm_mex(itpc_cfs,[],nperm); %itpc, not atanh(itpc)
 
-            mPM = mean(PM,3); %mean across permutations (fisherz normalize)
+            mPM = mean(PM,3); %mean across permutations 
             sPM = std(PM,0,3); %std across permutations
+
+            obj.ITPC.PM = PM;
+            obj.ITPC.mPM = mPM;
+            obj.ITPC.sPM = sPM;
 
             zITPC = (itpc-mPM)./sPM;
             zPM = (PM-mPM)./sPM;
@@ -6513,7 +6606,8 @@ classdef RWAnalysis2 < handle
                     zITPC_thresh(QV >= pval) = 0;
             end
 
-            obj.ITPC.nitpc_thresh = zITPC_thresh; %send this to the gui for plotting 2D band-limited itpc significance bar
+            obj.ITPC.zITPC = zITPC;
+            obj.ITPC.zITPC_thresh = zITPC_thresh;
 
             %Power
             pwr_cfs = WV(:,~idx,:); %this is already normalized (divided by median) by freq across entire walk
@@ -6523,6 +6617,9 @@ classdef RWAnalysis2 < handle
             pwr_cfs = 10*log10(pwr_cfs+eps);
             pwr = mean(pwr_cfs,3); %normalized trial avg power in dB (take trial avg in log space)
             tsec_pwr = tsec_wv_npwin;
+
+            obj.ITPC.pwr_cfs = pwr_cfs;
+            obj.ITPC.tsec_pwr = tsec_pwr;
             
             %permutation
             fprintf('Running pwr permutations for %d trials. This can take some time!\n',ntrials);
@@ -6530,6 +6627,10 @@ classdef RWAnalysis2 < handle
 
             mPM = mean(PM,3); %mean across permutations
             sPM = std(PM,0,3); %std across permutations
+
+            obj.ITPC.PM_pwr = PM_pwr;
+            obj.ITPC.mPM_pwr = mPM_pwr;
+            obj.ITPC.sPM_pwr = sPM_pwr;
 
             zPwr = (pwr-mPM)./sPM;
             zPM = (PM-mPM)./sPM;
@@ -6549,6 +6650,9 @@ classdef RWAnalysis2 < handle
                     QV = reshape(mafdr(PV(:),'BHFDR',true), size(PV));
                     zPwr_thresh(QV >= pval) = 0;
             end
+
+            obj.ITPC.zPwr = zPwr;
+            obj.ITPC.zPwr_thresh = zPwr_thresh;
 
             %Plotting
             fH = figure('Position',[50,50,800,800],'visible','on');
@@ -6725,7 +6829,7 @@ classdef RWAnalysis2 < handle
             ppc2 = (abs(sum(cfs(:,:,trialtype==1),3)).^2-ntrials2)./(ntrials2.*(ntrials2-1));
             dPPC = ppc1-ppc2;
 
-            nperm = 2000;
+            nperm = p.nperm;
             pval = p.pval;
             correctiontype = p.correctiontype; %pixel or fdr
             permtype = 'zscore';

@@ -1,6 +1,7 @@
 function itpc_band_boot = calcRWAITPCBootstrap(itpc_cfs)
 
-rng('shuffle'); %seed the random stream with clock time
+rng(1,'twister');
+% rng('shuffle'); %seed the random stream with clock time
 N = size(itpc_cfs,3); %number of trials
 B = 1000; %number of bootstrap iterations
 itpc_band_boot = nan(size(itpc_cfs,1), B);
