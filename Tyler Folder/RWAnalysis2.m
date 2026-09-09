@@ -146,7 +146,7 @@ classdef RWAnalysis2 < handle
     %     6) Compute/plot average phase (same for each patient?)(polar histogram of phase angles)
     %     7) X Add checkbox for saccade
     %     8) X Add power and headturn overlay (filter out trials based on headturn)
-    %     9) **Add separate figure for 2D plot of band-limited itpc with significance bar (fix 95ci!)
+    %     9) X Add separate figure for 2D plot of band-limited itpc with significance bar (fix 95ci!) (done)
     %    10) X Add checkbox for new saccade detection algorithm (done)
     %    11) X Add filter for long fixations vs short fixations to look for freq change in itpc (done) 
     %    12) X Add fixation/saccade to title!! (done)
@@ -155,10 +155,15 @@ classdef RWAnalysis2 < handle
     %    15) X 2D bootstrap was out of range with mean when fixations are aligned with doorways (potential fix by commented out since it takes a long time to compute)
     %    16) X Add overlap (fix) and fixation duration to title (done)
     %    17) X Check average fixation duration in title under high/low durations (done) 
-    %    18) For overlap transitions, need to add corresponding description
-    %    19) Metric for excluding overlapping fixations
-    %    20) A function for sliding window across event
+    %    18) X For overlap transitions, need to add corresponding description
+    %    19) **Metric for excluding overlapping fixations
+    %    20) X A function for sliding window across event
     %    21) X Save out data and figures (done)
+    %    22) X Make overlap size of wavelet not 1sec
+    %    23) Test on control event (choice point/correct turn without doorways)
+    %    24) X Switch for PPC
+    %    25) Show as line plot (also plot cluster characteristics)
+    %    26) Generate plots for LostBeg/LostEnd/Fix/Sac/Regions
     %
     % *GLMEGUI: 
     %     1) X Data export! (done)
@@ -345,6 +350,7 @@ classdef RWAnalysis2 < handle
             p.veltype = ''; %VelHigh, VelLow, VelHighTercile, VelMidTercile, VelLowTercile
             p.rmoverlap = false; %remove overlapping trials
             p.overlapevnts = ''; %remove trials that overlap with these events as well as with the same event (can have | separators)
+            p.overlapdesc = ''; %bracketed keyword found in the description (i.e. closed, open, in2in, in2out, etc.) specifically for overlapevnts
             p.rmoutliers = false; %remove outliers in in/out boxplot data
             p.glmemdl = ''; %glme model (i.e. nTheta ~ InFlag + (1|uPtChan)
             p.showbegendtrans = false; %show beg/end transition timepoint in specgram plot
@@ -361,6 +367,7 @@ classdef RWAnalysis2 < handle
             p.itpcfixdur = ''; %high, low, or empty (filters fixations/saccades by duration)
             p.alirezafix = false; %use alireza fixations
             p.fixsmooth = false; %smooth fixations across time in MultTransSpecGramGUI using 1Hz low pass
+            p.ppcflag = false; %ppc vs itpc
 
             if ~all(ismember(InputNames,[PropNames;fieldnames(p)]))
                 error('Input names are incorrect!')
@@ -1830,6 +1837,7 @@ classdef RWAnalysis2 < handle
             veltype = p.veltype; %VelHigh, VelLow, VelHighTercile, VelMidTercile, VelLowTercile
             rmoverlap = p.rmoverlap; %remove any overlapping trials
             overlapevnts = p.overlapevnts; %remove any trials that overlap with these events
+            overlapdesc = p.overlapdesc;
 
             if isempty(obj.MultTrans)
                 obj.getMultData;
@@ -2088,7 +2096,26 @@ classdef RWAnalysis2 < handle
                     else
                         overlapidx = contains(obj.MultTrans.Evnt,overlapevnts);
                     end
-                    overlapidx = overlapidx & ~obj.MultTrans.OL2; %calculated in getMultTransData
+                    if isempty(overlapdesc)
+                        descidx = true(size(obj.MultTrans.Desc));
+                    else
+                        desccell = regexp(overlapdesc,'&|\|','split');
+                        if contains(overlapdesc,'|')
+                            descidx = false(size(obj.MultTrans.Desc));
+                            for k=1:length(desccell)
+                                descidx = descidx | ~cellfun(@isempty,regexp(obj.MultTrans.Desc,['\[',desccell{k},'\]']));
+                            end
+                        else
+                            descidx = true(size(obj.MultTrans.Desc));
+                            for k=1:length(desccell)
+                                descidx = descidx & ~cellfun(@isempty,regexp(obj.MultTrans.Desc,['\[',desccell{k},'\]']));
+                            end
+                        end
+                        if ~any(descidx)
+                            error('Desc type was incorrect!');
+                        end
+                    end
+                    overlapidx = overlapidx & descidx & ~obj.MultTrans.OL2; %calculated in getMultTransData
                     np_idx = obj.MultTrans.DT_np_idx(overlapidx);
                     pt = obj.MultTrans.Patient(overlapidx);
                     wk = obj.MultTrans.Walk(overlapidx);
@@ -3564,6 +3591,7 @@ classdef RWAnalysis2 < handle
             transtype = p.transtype; %'Outdoor Beg', 'Outdoor End', 'Doorway'
             transrng = p.transrng; %default [-3,3] %window to search fixations
             nprng = [-1,1]; %window for getting np data aligned to fixations
+            ovrlp = 0.6; %should be approx length of 4Hz wavelet
 
             %Getting trials and specgram data
             obj.filterMultTransData(varargin{:}); %table of all trials and corresponding info (this creates MT and must be run before getFilteredMultTransData)
@@ -3620,7 +3648,7 @@ classdef RWAnalysis2 < handle
             WV = cell(1,size(uPtWkCh,1));
             IT = cell(1,size(uPtWkCh,1));
             FSDur = cell(1,size(uPtWkCh,1)); %fix/sac durations in sec
-            % Stats = []; %mean fixation, mean saccade durations in sec
+            DiffSec = []; %difference in sec between adjacent fixations
             for k=1:size(uPtWkCh,1)
                 % clc; disp(k/size(uPtWkCh,1));
 
@@ -3707,7 +3735,6 @@ classdef RWAnalysis2 < handle
                     %%%%%%%%%% Remove overlap %%%%%%%%%%%%%%%%%%%%%%
                     if p.rmfixoverlap
                         m=1;
-                        ovrlp = 2; %2sec overlap (+-1sec window)
                         [snp,sidx] = sort(ntp_gz);
                         while m<length(snp)
                             dnp = snp(m+1)-snp(m); %difference in sec
@@ -3721,6 +3748,9 @@ classdef RWAnalysis2 < handle
                         ntp_gz = snp;
                     end
                     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                    diffsec = diff(sort(ntp_gz)); %difference between events in same patient/walk converted to sec
+                    DiffSec = cat(1,DiffSec,diffsec);
 
                     %np data aligned with fixations/saccades
                     d_np = obj.MultTable{pt}.d_np{wk}(:,ch);
@@ -3788,6 +3818,12 @@ classdef RWAnalysis2 < handle
             IT = cat(3,IT{:});
             FSDur = cell2mat(FSDur);
 
+            %Calculating average overlap
+            OverlapIdx = DiffSec<ovrlp;
+            PercOverlap = sum(OverlapIdx)./numel(DiffSec)*100; 
+            AvgOverlapSec = mean(ovrlp-DiffSec(OverlapIdx));
+            fprintf('Perc/Avg(sec) Overlap: %0.2f/%0.2f\n',PercOverlap,AvgOverlapSec);
+
             %Remove any outliers
             ol = isoutlier(max(abs(zscore(D)))); %this type of outlier detection is applied for specgram data as well
             nan_idx = any(isnan(D)) | any(isnan(GZ)) | any(isnan(HT)) | ol;
@@ -3853,7 +3889,8 @@ classdef RWAnalysis2 < handle
             obj.MultEye.WV = WV;
             obj.MultEye.IT = IT;
             obj.MultEye.FSDur = FSDur;
-            % obj.MultEye.Stats = Stats;
+            obj.MultEye.PercOverlap = PercOverlap;
+            obj.MultEye.AvgOverlapSec = AvgOverlapSec;
             obj.MultEye.MT = obj.MultTrans.MT;
 
             obj.MultEye.transtype = transtype; %'Outdoor Beg', 'Outdoor End', 'Doorway'
@@ -3885,6 +3922,33 @@ classdef RWAnalysis2 < handle
             obj.MultEye.ntime_it_npwin = ntime_it_npwin;
 
             obj.MultEye.ntrials = ntrials;
+        end
+
+        function duration_sec = calcWaveletDurationSec(~,target_freq)
+            fb = cwtfilterbank('Wavelet','morse', ...
+                'SignalLength',1000, ...
+                'SamplingFrequency',250, ...
+                'FrequencyLimits',[2 120], ...
+                'TimeBandwidth',30);
+
+            % Extract the wavelet at 2 Hz
+            psi = wavelets(fb);
+            [~,freqs] = wt(fb,rand(1000,1));
+
+            % Find the index of the wavelet closest to 2 Hz
+            [~, idx] = min(abs(freqs - target_freq));
+
+            w = psi(idx,:);              % time-domain wavelet
+            fs = fb.SamplingFrequency; % 250 Hz
+
+            % Compute effective duration: region containing 95% of energy
+            E = abs(w).^2;
+            cumE = cumsum(E) / sum(E);
+
+            i1 = find(cumE >= 0.025, 1, 'first');
+            i2 = find(cumE >= 0.975, 1, 'first');
+
+            duration_sec = (i2 - i1) / fs;
         end
 
     end %methods
@@ -4700,7 +4764,7 @@ classdef RWAnalysis2 < handle
             end
            
             %Getting trials and specgram data
-            obj.filterMultTransData('transtype',transtype{1},'regiontype',regiontype{1},'walktype',walktype{1},'desctype',desctype{1},'patienttype',patienttype{1},'veltype',veltype{1},'customregion',customregion{1}); %table of all trials and corresponding info
+            obj.filterMultTransData('transtype',transtype{1},'regiontype',regiontype{1},'walktype',walktype{1},'desctype',desctype{1},'patienttype',patienttype{1},'veltype',veltype{1},'customregion',customregion{1},'overlapevnts',p.overlapevnts,'overlapdesc',p.overlapdesc,'rmoverlap',p.rmoverlap); %table of all trials and corresponding info
             obj.getFilteredMultTransData(transrng); %raw power for all trials (time x freq x trial)
 
             %Init some params
@@ -4714,7 +4778,7 @@ classdef RWAnalysis2 < handle
             nfreq = length(freq);
             ntime = length(tsamp);
 
-            obj.filterMultTransData('transtype',transtype{2},'regiontype',regiontype{2},'walktype',walktype{2},'desctype',desctype{2},'patienttype',patienttype{2},'veltype',veltype{2},'customregion',customregion{2}); %table of all trials and corresponding info
+            obj.filterMultTransData('transtype',transtype{2},'regiontype',regiontype{2},'walktype',walktype{2},'desctype',desctype{2},'patienttype',patienttype{2},'veltype',veltype{2},'customregion',customregion{2},'overlapevnts',p.overlapevnts,'overlapdesc',p.overlapdesc,'rmoverlap',p.rmoverlap); %table of all trials and corresponding info
             obj.getFilteredMultTransData(transrng); %raw power for all trials (time x freq x trial)
 
             MTd2 = obj.MultTrans.MTd;
@@ -6521,7 +6585,24 @@ classdef RWAnalysis2 < handle
             HT = obj.MultEye.HT;
             Stats = obj.MultEye.FSDur;
             MT = obj.MultEye.MT;
-            ntrials = obj.MultEye.ntrials;
+            % ntrials = obj.MultEye.ntrials;
+
+            b1 = any(isnan(D))';
+            b2 = squeeze(any(any(isnan(WV))));
+            b3 = squeeze(any(any(isnan(IT))));
+            b4 = any(isnan(GZ))';
+            b5 = any(isnan(HT))';
+            nan_idx = b1|b2|b3|b4|b5;
+            if (sum(nan_idx)/numel(nan_idx))>0.01
+                disp('More than 1% of trials are NaN!');
+            end
+            D(:,nan_idx) = [];
+            WV(:,:,nan_idx) = [];
+            IT(:,:,nan_idx) = [];
+            GZ(:,nan_idx) = [];
+            HT(:,nan_idx) = [];
+            Stats(nan_idx) = [];
+            ntrials = size(D,2);
 
             tsec_wv_npwin = obj.MultEye.tsec_wv_npwin;
             tsec_it_npwin = obj.MultEye.tsec_it_npwin;
@@ -6555,16 +6636,20 @@ classdef RWAnalysis2 < handle
             idx = f>32.5; %only looking at 2 to 32 Hz
             f(idx) = [];
 
-            %ITPC
+            %ITPC (PPC = (n .* ITPC.^2 - 1) ./ (n - 1))
             itpc_cfs = IT(:,~idx,:); %IT is complex unit vectors (already normalized by vector mag)
             itpc = mean(itpc_cfs,3); %mean across trials in complex
             itpc = abs(itpc); %inter-trial phase coherence -> same as plv but mean across trials (no angle difference)
+            if p.ppcflag
+                itpc = (ntrials.*itpc.^2-1)./(ntrials-1);
+            end
             tsec_itpc = tsec_it_npwin;
 
             %save to object so band-limited itpc can be generated in GUI
             obj.ITPC.itpc_cfs = itpc_cfs;
             obj.ITPC.f = f;
             obj.ITPC.tsec = tsec_itpc;
+            obj.ITPC.ppcflag = p.ppcflag;
 
             permtype = 'zscore';
             correctiontype = p.correctiontype; %pixel or fdr
@@ -6578,7 +6663,7 @@ classdef RWAnalysis2 < handle
 
             %permutation
             fprintf('Running itpc permutations for %d trials. This can take some time!\n',ntrials);
-            PM = calcRWAITPCPerm_mex(itpc_cfs,[],nperm); %itpc, not atanh(itpc)
+            PM = calcRWAITPCPerm_mex(itpc_cfs,[],nperm,p.ppcflag); %itpc, not atanh(itpc)
 
             mPM = mean(PM,3); %mean across permutations 
             sPM = std(PM,0,3); %std across permutations
@@ -6623,7 +6708,7 @@ classdef RWAnalysis2 < handle
             
             %permutation
             fprintf('Running pwr permutations for %d trials. This can take some time!\n',ntrials);
-            PM = calcRWAITPCPerm_mex([],pwr_cfs,nperm);
+            PM = calcRWAITPCPerm_mex([],pwr_cfs,nperm,false);
 
             mPM = mean(PM,3); %mean across permutations
             sPM = std(PM,0,3); %std across permutations
@@ -6775,7 +6860,7 @@ classdef RWAnalysis2 < handle
                 'itpcfixdur',p.itpcfixdur{1},'transrng',p.transrng,'rmoverlap',p.rmoverlap,...
                 'shuffleflag',p.shuffleflag,'saccadeflag',p.saccadeflag,...
                 'rmfixoverlap',p.rmfixoverlap,'alirezafix',p.alirezafix,...
-                'fullwalknorm',p.fullwalknorm); 
+                'fullwalknorm',p.fullwalknorm,'overlapdesc',p.overlapdesc{1}); 
 
             D1 = obj.MultEye.D;
             WV1 = obj.MultEye.WV;
@@ -6793,7 +6878,7 @@ classdef RWAnalysis2 < handle
                 'itpcfixdur',p.itpcfixdur{2},'transrng',p.transrng,'rmoverlap',p.rmoverlap,...
                 'shuffleflag',p.shuffleflag,'saccadeflag',p.saccadeflag,...
                 'rmfixoverlap',p.rmfixoverlap,'alirezafix',p.alirezafix,...
-                'fullwalknorm',p.fullwalknorm); 
+                'fullwalknorm',p.fullwalknorm,'overlapdesc',p.overlapdesc{2}); 
 
             D2 = obj.MultEye.D;
             WV2 = obj.MultEye.WV;
@@ -7026,7 +7111,124 @@ classdef RWAnalysis2 < handle
 
         end
 
+        function plotITPCEyeAcrossTime(obj,varargin)
+            p = obj.parseInputs(varargin{:});
+            if isempty(p.transtype)
+                error('transtype must be specified!');
+            end
+            if isempty(p.saccadeflag)
+                error('saccadeflag must be specified!');
+            end
+            if isempty(p.regiontype)
+                error('regiontype must be specified!');
+            else
+                if ~any(string(p.regiontype)==["AntHipp","LatTemp","Ent+Peri","PostHipp+Para"])
+                    error('regiontype is not found!');
+                end
+            end
+            params = {'transtype',p.transtype,'regiontype',p.regiontype,...
+                'walktype','All Walks','clim',[-10,10],'desctype',[],...
+                'patienttype','All Patients','pval',0.05,...
+                'veltype',[],'customregion',[],'rmoverlap',true,...
+                'overlapevnts',[],'shuffleflag',false,'permflag',true,...
+                'correctiontype','fdr','saccadeflag',p.saccadeflag,'ylim',[-20,20],...
+                'rmfixoverlap',false,'itpcfixdur','','alirezafix',true,...
+                'fullwalknorm',true,'nperm',5000,'overlapdesc',[]};
+            rng = (-15:1:20)+[-3,3]';
+            clusterStats = repmat(struct('timeStart',NaN,'timeStop',NaN,'freqStart',NaN,...
+                'freqStop',NaN,'timeWidth',NaN,'freqWidth',NaN,'timeCOM',NaN,...
+                'freqCOM',NaN,'timeWeightedCOM',NaN,'freqWeightedCOM',NaN,'clustSize',NaN), size(rng,2), 1);
+            for k=1:size(rng,2)
+                disp(k./size(rng,2));
+                pp = [params,'transrng',rng(:,k)'];
+                fH = obj.plotMultTransITPCEye(pp{:});
+                fidx = obj.ITPC.f>=2 & obj.ITPC.f<16;
+                tidx = obj.ITPC.tsec>=-0.2 & obj.ITPC.tsec<0.6;
+                freq = obj.ITPC.f(fidx);
+                time = obj.ITPC.tsec(tidx);
+                zITPC = obj.ITPC.zITPC_thresh(tidx, fidx);
+                ccITPC = bwconncomp(zITPC > 0);
+                if ccITPC.NumObjects > 0
+                    % Find the largest cluster
+                    [~, largestIdx] = max(cellfun(@numel, ccITPC.PixelIdxList));
+                    clusterIdx = ccITPC.PixelIdxList{largestIdx};
+
+                    % Rows are time; columns are frequency
+                    [timeIdx, freqIdx] = ind2sub(size(zITPC), clusterIdx);
+
+                    clusterTime = time(timeIdx);
+                    clusterFreq = freq(freqIdx);
+
+                    % Requested parameters
+                    clusterStats(k).timeStart = min(clusterTime);
+                    clusterStats(k).timeStop  = max(clusterTime);
+
+                    clusterStats(k).freqStart = min(clusterFreq);
+                    clusterStats(k).freqStop  = max(clusterFreq);
+
+                    clusterStats(k).timeWidth = clusterStats(k).timeStop - clusterStats(k).timeStart;
+                    clusterStats(k).freqWidth = clusterStats(k).freqStop - clusterStats(k).freqStart;
+
+                    % Frequency center of mass, with each cluster pixel weighted equally
+                    clusterStats(k).timeCOM = mean(clusterTime);
+                    clusterStats(k).freqCOM = mean(clusterFreq);
+
+                    weights = zITPC(clusterIdx);
+                    if sum(weights) > 0
+                        clusterStats(k).timeWeightedCOM = sum(clusterTime(:) .* weights(:)) / sum(weights);
+                        clusterStats(k).freqWeightedCOM = sum(clusterFreq(:) .* weights(:)) / sum(weights);
+                    end
+                    clusterStats(k).clustSize = sum(weights);
+                end
+                % fstr = sprintf('%03d_ITPC_%s_Sac%d_%d_%d.png',k,regexprep(p.transtype,'\s+',''),p.saccadeflag,rng(1,k),rng(2,k));
+                % print(fH,fullfile('E:\RWN\Figs\ITPC\LostBegEnd_AcrossTime',fstr),'-dpng','-r300');
+                close(fH);
+            end
+            fH = figure('Position',[50,50,1000,800]);
+            tl = tiledlayout(4,1,'Parent',fH,'TileSpacing','compact','Padding','compact');
+            t = mean(rng);
+
+            aH = nexttile(tl,1);
+            clustSize = cat(1,clusterStats.clustSize); clustSize(isnan(clustSize)) = 0;
+            plot(aH,t,clustSize);
+            title(aH,sprintf('%s (-0.2_0.6 sec, 2_16 Hz)',p.transtype),'Interpreter','none');
+            ylabel(aH,'Area')
+
+            aH = nexttile(tl,2);
+            timeStart = cat(1,clusterStats.timeStart); timeStart(isnan(timeStart)) = 0;
+            plot(aH,t,timeStart);
+            ylabel(aH,'Start (sec)')
+
+            aH = nexttile(tl,3);
+            timeWidth = cat(1,clusterStats.timeWidth); timeWidth(isnan(timeWidth)) = 0;
+            plot(aH,t,timeWidth);
+            ylabel(aH,'Width (sec)')
+
+            aH = nexttile(tl,4);
+            freqCOM = cat(1,clusterStats.freqWeightedCOM); freqCOM(isnan(freqCOM)) = 0;
+            plot(aH,t,freqCOM);
+            ylabel(aH,'COM (Hz)')
+            xlabel(aH,'sec');
+
+            fstr = sprintf('ITPC_%s_%s_Sac%d_-15to20sec.png',regexprep(p.transtype,'\s+',''),regexprep(p.regiontype,'\s+',''),p.saccadeflag);
+            print(fH,fullfile('E:\RWN\Figs\ITPC\AcrossTime_LinePlot',fstr),'-dpng','-r300');
+            close(fH);
+        end
         
+        function batchITPCEyeAcrossTime(obj,varargin)
+            transtype = {'Lost Beg','Lost End'};
+            regiontype = {'AntHipp','LatTemp','Ent+Peri','PostHipp+Para'};
+            saccadeflag = [false,true];
+
+            for m=1:length(transtype)
+                for n=1:length(regiontype)
+                    for k=1:length(saccadeflag)
+                        disp((m*n*k)./(length(transtype)*length(regiontype)*length(saccadeflag)))
+                        obj.plotITPCEyeAcrossTime('transtype',transtype{m},'regiontype',regiontype{n},'saccadeflag',saccadeflag(k));
+                    end
+                end
+            end
+        end
         %%%%%%%%%%%%%% Old/Unused %%%%%%%%%%%%%%%%%%
 
         function plotTransSpecGramByWalk(obj,varargin)

@@ -1,4 +1,4 @@
-function PM = calcRWAITPCPerm(cfs,pwr,nperm)
+function PM = calcRWAITPCPerm(cfs,pwr,nperm,ppcflag)
 
 if isempty(cfs)
     ntime = size(pwr,1);
@@ -28,7 +28,12 @@ parfor m=1:nperm %permutations
         for k=1:ntrials
             cfs_shift(:,:,k) = circshift(cfs(:,:,k),cutpoint(k),1); %time x freq x trial (shift time)
         end
-        PM(:,:,m) = abs(mean(cfs_shift,3)); %mean across trials in complex
+        if ppcflag
+            itpc = abs(mean(cfs_shift,3));
+            PM(:,:,m) = (ntrials.*itpc.^2-1)./(ntrials-1);
+        else
+            PM(:,:,m) = abs(mean(cfs_shift,3)); %mean across trials in complex
+        end
     end
 end
 % wait_msg.Destroy;
