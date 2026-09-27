@@ -1,4 +1,4 @@
-function itpc_band_boot = calcRWAITPCBootstrap(itpc_cfs)
+function itpc_band_boot = calcRWAITPCBootstrap(itpc_cfs,ppcflag)
 
 rng(1,'twister');
 % rng('shuffle'); %seed the random stream with clock time
@@ -8,5 +8,8 @@ itpc_band_boot = nan(size(itpc_cfs,1), B);
 parfor k=1:B
     idx = randi(N, [1 N]); %randomly sample with replacement
     itpc_tf_b = abs(mean(itpc_cfs(:,:,idx), 3, 'omitnan')); %mean across trials in complex
+    if ppcflag
+        itpc_tf_b = (N.*itpc_tf_b.^2-1)./(N-1);
+    end
     itpc_band_boot(:, k) = mean(itpc_tf_b, 2, 'omitnan'); %mean across freq in real
 end
